@@ -345,6 +345,15 @@ impl SoundApp {
         }
         match self.engine.execute(id, &params) {
             Ok(v) => {
+                if matches!(id, "session.new" | "session.open" | "session.close" | "session.revert") {
+                    if matches!(self.dialogs.open, Some(dialogs::Dialog::RelinkAudio { .. })) {
+                        self.dialogs.open = None;
+                    }
+                    self.audio_health_report = None;
+                }
+                if matches!(id, "media.relink" | "source.relink" | "edit.undo" | "edit.redo") {
+                    self.audio_health_report = None;
+                }
                 if id == "app.quit" {
                     self.quit_requested = true;
                 }

@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first interaction checklist against Pro Tools 2026.4.1) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (native missing-audio relink dialog) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 How SoundCraft feels in the hands of a Pro Tools user: tools, modes, modifiers, shortcuts,
 windows, meters. Measured from `crates/model/src/session.rs` (tools, modes), the command
@@ -43,6 +43,7 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 | MIDI Editor, Score Editor, Event List | 🟡 | Dock height bug fixed (#113); notation editing shallow |
 | Transport, Big Counter, Memory Locations, Automation, Video, Universe, Renderer, UI Customization | ✅ present | |
 | Workspace / sound browser with previews | ❌ | G-16 |
+| Missing audio relink | 🟡 | Native Session Audio Health action, file picker/path entry, content validation, explicit legacy confirmation and retry after errors; automatic/batch relinking remains G-16 |
 | I/O Setup | 🟡 | Busses and paths; no hardware channel matrix (G-01) |
 | Preferences | 🟡 | Many settings stored, fewer honoured |
 | Window configurations, Tile/Cascade | 🟡 | Configurations ✅; Tile/Cascade in PR #151 |
@@ -64,4 +65,5 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added native manual audio relink dialog and health-report refresh; no general UI parity claim |
 | 2026-10-10 | major | Created: tools, modes, shortcuts, windows and meters checklist against Pro Tools 2026.4.1 |

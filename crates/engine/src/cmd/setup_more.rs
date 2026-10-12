@@ -405,12 +405,10 @@ fn midi_inputs(e: &mut Engine, p: &Value) -> Result<Value> {
 fn load_source(dir: &Path, src: &Source, sr: u32) -> Option<soundcraft_audio_io::AudioBuffer> {
     let p = if Path::new(&src.path).is_absolute() { PathBuf::from(&src.path) } else { dir.join(&src.path) };
     let bytes = std::fs::read(&p).ok()?;
-    let (_, mut buf) = soundcraft_audio_io::decode(&bytes, p.extension().and_then(|x| x.to_str())).ok()?;
-    if buf.sample_rate != sr && buf.sample_rate > 0 {
-        buf.channels = soundcraft_dsp::offline::resample(&buf.channels, buf.sample_rate, sr);
-        buf.sample_rate = sr;
-    }
-    Some(buf)
+    let (_, buf) = soundcraft_audio_io::decode(&bytes, p.extension().and_then(|x| x.to_str())).ok()?;
+    let buf = crate::media::at_rate(buf, src.sample_rate).ok()?;
+    crate::media::validate_audio(src, &buf, true).ok()?;
+    crate::media::at_rate(buf, sr).ok()
 }
 
 fn import_session_data(e: &mut Engine, p: &Value) -> Result<Value> {
@@ -457,6 +455,7 @@ fn import_session_data(e: &mut Engine, p: &Value) -> Result<Value> {
                 ns.frames = b.frames() as u64;
                 ns.sample_rate = sr;
                 ns.unsaved = true;
+                ns.audio_identity = Some(crate::media::audio_identity(&b));
                 s.pool.insert(nid, Arc::new(SourceAudio::new(b)));
             }
             None => {

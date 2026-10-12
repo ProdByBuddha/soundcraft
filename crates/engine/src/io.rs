@@ -49,6 +49,7 @@ pub fn add_source(s: &mut Session, name: &str, mut buf: AudioBuffer, path: Optio
         format,
         time_reference: 0,
         unsaved: true,
+        audio_identity: Some(crate::media::audio_identity(&buf)),
     });
     s.pool.insert(id, Arc::new(SourceAudio::new(buf)));
     id
@@ -550,6 +551,11 @@ fn write_session(session: &Session, path: &str, overwrite: bool) -> Result<(Sess
     let shared_paths: Vec<bool> =
         s.sources.iter().enumerate().map(|(i, src)| s.sources.iter().enumerate().any(|(j, other)| j != i && other.path == src.path)).collect();
     for (i, src) in s.sources.iter_mut().enumerate() {
+        if src.audio_identity.is_none()
+            && let Some(audio) = s.pool.get(src.id)
+        {
+            src.audio_identity = Some(crate::media::audio_identity(&audio.buffer));
+        }
         if !same_dir
             && s.pool.get(src.id).is_none()
             && Path::new(&src.path).is_relative()
@@ -559,11 +565,11 @@ fn write_session(session: &Session, path: &str, overwrite: bool) -> Result<(Sess
         }
         let exists_rel = same_dir && !Path::new(&src.path).is_absolute() && dir.join(&src.path).exists();
         let shared = shared_paths.get(i).copied().unwrap_or(false);
-        if exists_rel && !src.unsaved && !shared {
+        if !overwrite && exists_rel && !src.unsaved && !shared {
             continue;
         }
         let in_folder = Path::new(&src.path).strip_prefix(&audio_dir).ok().and_then(Path::to_str).map(str::to_string);
-        if let Some(f) = in_folder.filter(|_| !src.unsaved && Path::new(&src.path).is_file()) {
+        if let Some(f) = in_folder.filter(|_| !overwrite && !src.unsaved && Path::new(&src.path).is_file()) {
             src.path = format!("Audio Files/{f}");
             continue;
         }
@@ -571,16 +577,15 @@ fn write_session(session: &Session, path: &str, overwrite: bool) -> Result<(Sess
         std::fs::create_dir_all(&audio_dir).map_err(|err| EngineError::Io(format!("{}: {err}", audio_dir.display())))?;
         let mut stem = sanitize_name(&src.name);
         if overwrite {
-            // One file per source id so autosaves never collide or pile up.
+            // Keep stable candidate names, but let store_wav validate the bytes. Different
+            // documents and undo states can reuse a source id/name for different audio.
             stem = format!("{stem}_{}", src.id.0);
-            if audio_dir.join(format!("{stem}.wav")).exists() {
-                src.path = format!("Audio Files/{stem}.wav");
-                src.unsaved = false;
-                continue;
-            }
         }
         let opts = EncodeOptions { format: FileFormat::Wav, bit_depth: soundcraft_audio_io::BitDepth::Float32, dither: false, bwf: None };
         let bytes = soundcraft_audio_io::encode(&audio.buffer, &opts).map_err(|err| EngineError::Io(err.to_string()))?;
+        // Identity describes the saved PCM, including any conversion performed by the encoder.
+        let (_, saved) = soundcraft_audio_io::decode(&bytes, Some("wav")).map_err(|err| EngineError::Io(err.to_string()))?;
+        src.audio_identity = Some(crate::media::audio_identity(&saved));
         let (name, new) = store_wav(&audio_dir, &stem, &bytes)?;
         src.path = format!("Audio Files/{name}");
         src.unsaved = false;
@@ -735,10 +740,10 @@ pub fn open_session(e: &mut Engine, path: &str) -> Result<Vec<String>> {
 
 /// Decode one source's audio file into the session pool, at the session rate.
 fn load_source_audio(s: &mut Session, id: SourceId, bytes: &[u8], ext: Option<&str>) -> std::result::Result<(), String> {
-    let (_, mut buf) = soundcraft_audio_io::decode(bytes, ext).map_err(|err| err.to_string())?;
-    if buf.sample_rate != s.sample_rate.hz() && buf.sample_rate > 0 {
-        buf.channels = soundcraft_dsp::offline::resample(&buf.channels, buf.sample_rate, s.sample_rate.hz());
-        buf.sample_rate = s.sample_rate.hz();
+    let (_, buf) = soundcraft_audio_io::decode(bytes, ext).map_err(|err| err.to_string())?;
+    let buf = crate::media::at_rate(buf, s.sample_rate.hz())?;
+    if let Some(src) = s.source(id) {
+        crate::media::validate_audio(src, &buf, true)?;
     }
     s.pool.insert(id, Arc::new(SourceAudio::new(buf)));
     Ok(())
@@ -799,6 +804,8 @@ pub fn session_bundle(session: &Session) -> Result<(Vec<u8>, Session)> {
         }
         let opts_wav = EncodeOptions { format: FileFormat::Wav, bit_depth: soundcraft_audio_io::BitDepth::Float32, dither: false, bwf: None };
         let bytes = soundcraft_audio_io::encode(&audio.buffer, &opts_wav).map_err(|err| EngineError::Io(err.to_string()))?;
+        let (_, saved) = soundcraft_audio_io::decode(&bytes, Some("wav")).map_err(|err| EngineError::Io(err.to_string()))?;
+        src.audio_identity = Some(crate::media::audio_identity(&saved));
         w.start_file(target.as_str(), opts).map_err(zerr)?;
         w.write_all(&bytes).map_err(ioerr)?;
         taken.insert(target.clone());
@@ -1020,6 +1027,7 @@ mod record_tests {
         let mut e = Engine::default();
         let vox = armed(&mut e, "Vox", "mono", "In 1");
         assert_eq!(add_recording(&mut e, 1_000, vec![(vox, path.clone())], Some(400)).len(), 3);
+        assert_eq!(save_copy(&e, &dir.join("Untitled.scraft").to_string_lossy()).unwrap(), 1);
         assert_eq!(save_copy(&e, &dir.join("Untitled.scraft").to_string_lossy()).unwrap(), 0);
         let t = e.session().track(vox).unwrap();
         let passes: Vec<_> = t.playlists.iter().flat_map(|p| p.clips.iter().map(|c| (c.source_offset(), c.start, c.length))).collect();
