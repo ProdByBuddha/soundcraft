@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first interaction checklist against Pro Tools 2026.4.1) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (strict audio-complete Save Copy; broader portability remains open) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 How SoundCraft feels in the hands of a Pro Tools user: tools, modes, modifiers, shortcuts,
 windows, meters. Measured from `crates/model/src/session.rs` (tools, modes), the command
@@ -60,8 +60,11 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 | Fader resolution, fine adjust, numeric entry | 🟡 | |
 | macOS system menu bar | ✅ | #10 |
 
+Save Session Copy In has a dedicated media preview, blocked-source reasons, explicit external-video limits, and stale-preview refresh that retains the typed destination. [Behavior and residual scope](session-copy.md).
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | major | Created: tools, modes, shortcuts, windows and meters checklist against Pro Tools 2026.4.1 |

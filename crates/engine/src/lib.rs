@@ -14,6 +14,7 @@ pub mod edit;
 pub mod inspect;
 pub mod io;
 pub mod score;
+pub mod session_copy;
 
 use serde_json::{Value, json};
 use soundcraft_model::{Clip, Session, TrackId, ZoomState};

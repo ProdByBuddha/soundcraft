@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (alpha blockers marked after the core-workflow gate) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (strict audio-complete Save Copy; broader portability remains open) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -76,6 +76,8 @@ When you close a gap, delete its entry (or shrink it) in the same PR, and bump t
   black-box format study is in the clean-room rules; not included in the estimate.
 
 ### G-04. Correctness bugs in "done" features
+
+- **Session copy:** [strict audio preflight and manifest](session-copy.md) cover all declared decoded sources while preserving missing-media ordinary saves/recovery. Conversion, selected-time export, original-file bytes/BWF metadata, video, external plugin-file inventory and whole-copy rollback remain open (manual-analysis ED-03 stays partial).
 
 Open on 2026-10-10 (several have PRs open):
 editing #3, #5, #140, #144; clip/session #86 (PR #123), #88 (PR #130), #91 (PR #124), #92 (PR #132);
@@ -196,5 +198,6 @@ missing. Out of scope unless the owner decides otherwise.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | minor | Marked the alpha blockers (G-01, G-02, G-03; parts of G-05 and G-06) from the core-workflow gate |
 | 2026-10-10 | major | Created from the full re-measure against Pro Tools Ultimate 2026.4.1: 22 ranked gaps with evidence and estimates |

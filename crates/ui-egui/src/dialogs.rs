@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use soundcraft_engine::Engine;
 use soundcraft_model::{ClipId, Session, SourceId, TrackId};
 use soundcraft_time::Samples;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum Dialog {
@@ -17,6 +18,7 @@ pub enum Dialog {
     RenameClip { id: ClipId, name: String },
     ClearClips { clips: Vec<ClipId>, sources: Vec<SourceId>, message: String },
     PathPrompt { cmd: String, title: String, path: String, key: String },
+    SaveCopy { path: String, preview: soundcraft_engine::session_copy::CopyPreview, document: Arc<Session>, revision: u64 },
     Number { cmd: String, title: String, key: String, value: f64, suffix: String },
     TempoChange { at: Samples, bpm: f64 }, // from double-clicking the tempo ruler
     Fades { shape: String },
@@ -44,6 +46,7 @@ impl Dialogs {
             Dialog::RenameClip { .. } => "rename_clip",
             Dialog::ClearClips { .. } => "clear_clips",
             Dialog::PathPrompt { .. } => "path",
+            Dialog::SaveCopy { .. } => "save_copy",
             Dialog::Number { .. } => "number",
             Dialog::TempoChange { .. } => "tempo_change",
             Dialog::Fades { .. } => "fades",
@@ -91,8 +94,13 @@ impl Dialogs {
             "file.import_midi" => Dialog::PathPrompt { cmd: id.into(), title: "Import MIDI".into(), path: home, key: "path".into() },
             "session.open" => Dialog::PathPrompt { cmd: id.into(), title: "Open Session".into(), path: home, key: "path".into() },
             "session.save" if e.path.is_some() => return false,
-            "session.save" | "session.save_as" | "session.save_copy" => Dialog::PathPrompt {
-                cmd: if id == "session.save_copy" { id } else { "session.save_as" }.into(),
+            "session.save_copy" => {
+                let path = if home.is_empty() { format!("{name} Copy.scraftz") } else { format!("{home}/{name} Copy/{name} Copy.scraft") };
+                let preview = soundcraft_engine::session_copy::preview(e, Some(&path));
+                Dialog::SaveCopy { path, preview, document: e.session_arc(), revision: e.revision }
+            }
+            "session.save" | "session.save_as" => Dialog::PathPrompt {
+                cmd: "session.save_as".into(),
                 title: "Save Session As".into(),
                 // The browser has no folders: the name becomes the bundle file's name.
                 path: if home.is_empty() {
@@ -262,6 +270,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
         Dialog::RenameTrack { .. } => "Rename Track",
         Dialog::RenameClip { .. } => "Rename Clip",
         Dialog::ClearClips { .. } => "Clear",
+        Dialog::SaveCopy { .. } => "Save Session Copy In",
         Dialog::PathPrompt { title, .. } | Dialog::Number { title, .. } => title.as_str(),
         Dialog::TempoChange { .. } => "Tempo Change (BPM)",
         Dialog::Fades { .. } => "Fades",
@@ -425,6 +434,75 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
                         action = Some((cmd.clone(), v));
                     }
                 }
+                Dialog::SaveCopy { path, preview, document, revision } => {
+                    ui.set_max_width(520.0);
+                    let mut stale = *revision != app.engine.revision || !Arc::ptr_eq(document, &app.engine.session_arc());
+                    let mut changed = ui.add(egui::TextEdit::singleline(path).desired_width(510.0)).changed();
+                    if let Some(pick) = &app.services.pick_save
+                        && ui.button("Browse…").clicked()
+                        && let Some(p) = pick("session.save_copy", path)
+                    {
+                        *path = p;
+                        changed = true;
+                    }
+                    if stale {
+                        ui.label("Session changed. Refresh the media preview before saving.");
+                        if ui.button("Refresh Preview").clicked() {
+                            *document = app.engine.session_arc();
+                            *revision = app.engine.revision;
+                            stale = false;
+                            changed = true;
+                        }
+                    }
+                    if changed && !stale {
+                        *preview = soundcraft_engine::session_copy::preview(&app.engine, Some(path));
+                    }
+                    ui.label(format!(
+                        "{} audio sources ready · {} missing · {} invalid",
+                        preview.ready_audio, preview.missing_audio, preview.invalid_audio
+                    ));
+                    ui.label(format!("Audio is saved as Float32 WAV at {} Hz.", preview.sample_rate));
+                    ui.label("The open session keeps its name, saved path and edits.");
+                    if preview.external_video_count > 0 {
+                        ui.label(format!("{} video references stay external and are not copied.", preview.external_video_count));
+                    }
+                    ui.label(
+                        egui::RichText::new("Audio portability only. External plugin files and other assets are not assessed.")
+                            .small()
+                            .color(Tokens::current().text_dim),
+                    );
+                    egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
+                        for issue in &preview.issues {
+                            ui.label(issue);
+                        }
+                        for row in &preview.media {
+                            if row.kind == "video" || row.status != "ready" {
+                                ui.label(format!("{} (source {}): {}", row.name, row.source, row.reason.as_deref().unwrap_or(row.status)));
+                            }
+                        }
+                    });
+                    let file = soundcraft_engine::io::session_file(path);
+                    let replaces = !cfg!(target_arch = "wasm32") && soundcraft_engine::io::replaces(&app.engine, "session.save_copy", &file);
+                    if replaces {
+                        ui.label(format!("“{}” already exists. Replace its session file?", file.file_name().unwrap_or_default().to_string_lossy()));
+                    }
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            ui.ctx().memory_mut(|m| m.data.insert_temp(egui::Id::new("dlg_cancel"), true));
+                        }
+                        if ui
+                            .add_enabled(
+                                preview.ready && !stale,
+                                egui::Button::new(if replaces { "Replace Copy" } else { "Save Copy" }).fill(Tokens::current().accent),
+                            )
+                            .clicked()
+                            || (enter && preview.ready && !stale && !replaces && !changed)
+                        {
+                            action = Some(("session.save_copy".into(), json!({"path": path, "replace": replaces, "expected_revision": revision})));
+                        }
+                    });
+                }
                 Dialog::Number { cmd, key, value, suffix, .. } => {
                     ui.horizontal(|ui| {
                         ui.add(egui::DragValue::new(value).speed(0.1));
@@ -549,6 +627,9 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
             }
         });
     if esc || ctx.memory(|m| m.data.get_temp::<bool>(egui::Id::new("dlg_cancel")).unwrap_or(false)) {
+        if matches!(d, Dialog::SaveCopy { .. }) {
+            action = None;
+        }
         keep = false;
         app.dialogs.after_save = None;
         ctx.memory_mut(|m| m.data.remove::<bool>(egui::Id::new("dlg_cancel")));
