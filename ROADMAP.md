@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~5% and ~110–180 h away (the alpha gate's three failing workflows)
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (validated audio relink and bounded batch track rename workflows) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (integrated recording, editing and delivery workflows) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 SoundCraft is a clean-room, pure-Rust digital audio workstation that aims at full parity with
 Avid Pro Tools, and then beyond it: faster, open, scriptable and agent-controllable. This page is
@@ -36,8 +36,8 @@ Detail: [target-app-parity.md](docs/target-app-parity.md#readiness-by-audience).
 **Why pre-alpha:** the core-workflow gate in [docs/roadmap.md](docs/roadmap.md#alpha-gate) fails.
 Editing, mixing, bouncing, and saving and reopening work end to end. But a Pro Tools user can't
 record from a chosen audio interface at a chosen buffer size (only the default devices, a fixed
-512-sample block, and takes held in RAM). They can't record MIDI from a keyboard (there is no
-MIDI device layer). And they can't bring a session in or hand one back (no AAF/OMF/`.ptx`).
+512-sample block, and unverified physical-volume recording acceptance). They can't record MIDI
+from a keyboard (there is no MIDI device layer). And they can't bring a session in or hand one back (no AAF/OMF/`.ptx`).
 Readiness (~40 %) sits right at the alpha bar, but a gate failure keeps the app pre-alpha. The
 2026-10-07 estimate ("~65 % overall, 110–150 h to 100 %") counted feature presence. This one
 measures readiness and adds hardware, localization and field bug reports.
@@ -122,6 +122,7 @@ mutated and truncated movies. Field reports from the first public week are track
 
 ## Progress log
 
+- **2026-10-12 (combined fork workflows):** recording allocation reaches native take planning; Commit retains supported exact channel layouts; recovery isolates each document and validates reused bytes; Float32 files retain finite headroom; single-track names validate their stored form; Bounce Mix selects an independent delivery rate. These combine with the relink and batch naming workflows below. Physical-volume tests, broader Commit/delivery policies, recovery controls and independent fidelity checks remain. No readiness or hours remeasurement. See [fork-integration.md](docs/fork-integration.md).
 - **2026-10-12 (audio relink):** Session Audio Health offers user-selected relinking of missing audio with exact decoded PCM identity and metadata checks. Legacy sessions require explicit confirmation when no identity exists. Commands preserve source IDs, clips, timing and alternate takes, support undo/redo and save/reopen, and never open programmatic dialogs. Saved-file identities reflect the actual WAV PCM; autosave byte checks preserve earlier recordings. Automatic searches, batch relinking, video and interchange relinking remain out of scope. No readiness percentage change. See [media-relink.md](docs/media-relink.md).
 - **2026-10-12 (batch track naming):** selected tracks support literal replacement, end trimming, prefix/suffix text and decimal numbering with an old/new preview, atomic collision checks and one Undo. Edit, Mix and Track List context entries plus the manual shortcut are available. Advanced controls and clip/file naming remain; no readiness percentage or hours estimate change. See [batch-track-rename.md](docs/batch-track-rename.md).
 - **2026-10-10 (UI docking):** Tracks and Groups, Clips, MIDI Editor, Memory Locations, and Undo History use movable panels. Edit and Mix retain separate arrangements; Clips and MIDI Editor belong to Edit. Transport, plug-in, and specialist utility windows retain their existing hosts. Panel moves and reset are available as UI commands, and saved UI preferences retain arrangements. Common toolbar and track record-enable buttons share interaction, accessible labels and keyboard focus through `craft-ui`, retaining blue tool selection and red record-arm states. No readiness percentage change.
@@ -141,10 +142,13 @@ mutated and truncated movies. Field reports from the first public week are track
 - **2026-10-05** — Foundation crates, Edit and Mix windows, playback, CLI/MCP, parity report,
   recording and punch, CLAP hosting, Elastic Audio, Beat Detective, release pipeline.
 
+Integrated workflow details and remaining validation: [fork integration](docs/fork-integration.md). Existing percentages and hours remain prior estimates.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Combined recording allocation, exact Commit layouts, isolated recovery, PCM-validated relink, Float32 preservation, stored/batch track names and Bounce Mix delivery rate; estimates unchanged |
 | 2026-10-12 | minor | Added user-selected missing-audio relink; G-16 remains open for broader session management |
 | 2026-10-12 | minor | Added bounded batch track naming; advanced manual controls remain, estimates unchanged |
 | 2026-10-10 | minor | Readiness-by-audience table with hours: full 950–1,450 h, mainstream 380–600 h, essentials 110–200 h |

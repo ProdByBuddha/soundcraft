@@ -1292,6 +1292,29 @@ mod save_tests {
     }
 
     #[test]
+    fn recovery_float_headroom_preserves_identity_and_prior_source_id_audio() {
+        let dir = std::env::temp_dir().join(format!("soundcraft-recovery-float-integration-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (first, second) = (with_take(1.25), with_take(-2.5));
+        assert_eq!(first.session().sources[0].id, second.session().sources[0].id);
+        let path = dir.join("Recovery.scraft").to_string_lossy().into_owned();
+        assert_eq!(save_copy(&first, &path).unwrap(), 1);
+        let before = reopen(&path);
+        let prior_audio = dir.join(&before.session().sources[0].path);
+        assert_eq!(first_sample(&before), 1.25);
+        assert_eq!(before.session().sources[0].audio_identity, first.session().sources[0].audio_identity);
+        assert_eq!(save_copy(&second, &path).unwrap(), 1);
+        assert_eq!(save_copy(&second, &path).unwrap(), 0);
+        let after = reopen(&path);
+        assert_eq!(first_sample(&after), -2.5);
+        assert_eq!(after.session().sources[0].audio_identity, second.session().sources[0].audio_identity);
+        assert_ne!(before.session().sources[0].path, after.session().sources[0].path);
+        let (_, prior) = soundcraft_audio_io::decode(&std::fs::read(prior_audio).unwrap(), Some("wav")).unwrap();
+        assert_eq!(prior.channels[0][0], 1.25);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn autosave_rejects_changed_bytes_at_an_existing_audio_name() {
         let dir = std::env::temp_dir().join(format!("soundcraft-autosave-corrupt-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

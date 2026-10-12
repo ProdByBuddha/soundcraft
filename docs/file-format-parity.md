@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (optional audio identity and validated relink) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Float32 preservation and independent bounce delivery rate) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every format Pro Tools reads or writes, and ours. The Pro Tools list comes from the document types
 its bundle declares (`CFBundleDocumentTypes` in Info.plist: names only, nothing else read) and its
@@ -34,10 +34,10 @@ Legend: ✅ supported and tested · 🟡 partial · ❌ missing · — not appli
 
 | Format | Pro Tools | Read | Write | Tests / notes |
 |---|---|---|---|---|
-| WAV / BWF (PCM 16/24/32, float 32), `bext` | native | ✅ | ✅ | Native reader/writer, TPDF dither option; also 8-bit and float 64 read |
+| WAV / BWF (PCM 16/24/32, float 32), `bext` | native | ✅ | ✅ | Native reader/writer, finite Float32 headroom retained, TPDF dither option; also 8-bit and float 64 read |
 | RF64 / BW64 (> 4 GiB) | read/write | ✅ | ✅ | `encode_wav_rf64` |
 | WAV `WAVE_FORMAT_EXTENSIBLE` multichannel with channel mask | read/write | ✅ | ✅ | `encode_with_channel_mask`; default 5.1 import creates a stereo track (#89, PR #128) |
-| AIFF / AIFF-C | native | ✅ | ✅ (`fl32`) | Native |
+| AIFF / AIFF-C | native | ✅ | ✅ (`fl32`) | Finite Float32 headroom retained |
 | FLAC | import | ✅ | ✅ | Own encoder |
 | MP3 | import, bounce | ✅ (symphonia) | ❌ | G-21 |
 | AAC / M4A / MP4 audio | import, bounce | ✅ (symphonia) | ❌ | G-21 |
@@ -49,6 +49,10 @@ Legend: ✅ supported and tested · 🟡 partial · ❌ missing · — not appli
 | MXF audio (OP-Atom, OP1a) | import | ❌ | ❌ | Avid media; FilmCraft has an MXF reader to learn from |
 | iXML / polyphonic field-recorder metadata | read | ❌ | ❌ | G-17 |
 | Peak overviews | `.wfm` cache | ✅ (own, in memory) | — | `audio-io::peaks`; not cached on disk |
+
+Bounce Mix supports an independently selected 8,000–768,000 Hz delivery rate with checked
+allocation limits and output-rate measurements. Conversion quality choices, layout-aware
+loudness weighting and further dither controls remain ([details](bounce-sample-rate.md)).
 
 ## MIDI and notation
 
@@ -77,9 +81,12 @@ Legend: ✅ supported and tested · 🟡 partial · ❌ missing · — not appli
 | VST3 / Audio Units / CLAP | — (AAX only) | ✅ hosted (ahead of Pro Tools) |
 | Plug-in settings `.tfx` | read/write | ❌ (our own JSON presets per plugin) |
 
+Integrated workflow details and remaining validation: [fork integration](fork-integration.md). Existing percentages and hours remain prior estimates.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Finite Float32 headroom and bounded independent Bounce Mix sample rate integrated with saved PCM identity |
 | 2026-10-12 | minor | Backward-compatible optional PCM identity; known changed media stays unavailable; manual audio relink persists across save/bundle reopening |
 | 2026-10-10 | major | Created: format inventory against Pro Tools 2026.4.1's declared document types and import/bounce options |

@@ -1,6 +1,6 @@
 # SoundCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (validated audio relink and bounded batch track naming workflows) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined fork progress and validation limits) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Forward-looking plan. Status and numbers: [`../ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the ranked work list: [`gaps.md`](gaps.md).
@@ -33,7 +33,7 @@ main platform). Any **no** keeps SoundCraft **pre-alpha**, and those rows are th
 
 | Workflow | Works end to end? | Evidence | Hours to pass |
 |---|---|---|---:|
-| Record audio from a chosen interface at a chosen buffer size, monitor, punch, keep the takes | **no** | Default output and input devices only. Fixed 512-sample block. Separate input and output streams. `setup.playback_engine` params ignored by playback. Takes held in RAM until stop (PR #84). No input device choice (#42). | 35–55 |
+| Record audio from a chosen interface at a chosen buffer size, monitor, punch, keep the takes | **no** | Default output and input devices only. Fixed 512-sample block. Separate input and output streams. `setup.playback_engine` params ignored by playback. Native disk writer/allocation exists; physical-volume recording acceptance remains. No input device choice (#42). | 35–55 |
 | Record MIDI from a controller and play it back through an instrument | **no** | Playback of drawn and imported MIDI works. No MIDI device layer at all, so nothing can be recorded and instruments can't be played live (G-02). | 20–35 |
 | Edit: select, trim, fade, comp playlists, Slip/Shuffle/Grid | yes (rough) | Every Edit menu command; property-tested with undo; open bugs #3, #5, #140 don't block the workflow | — |
 | Mix with built-in and third-party plugins, sends, busses, automation | partial (passes on CLAP/AU) | 26 built-in processors; CLAP and AU host on the signed macOS build, but its missing entitlement blocks third-party VST3 (#153). No AU plugin windows yet; VST3 windows on macOS only | 1–2 (entitlement) |
@@ -51,7 +51,7 @@ Status: ✅ done · 🟡 in progress · ⬜ not started.
 |---|---|---|---:|
 | M0–M4 | Workspace, gates, model, I/O, DSP, mix engine, command engine, Edit/Mix UI, playback, metering, plugins, bounce | ✅ | — |
 | M5 | Editing depth (tools, modes, playlists, fades, comping, clip groups) | ✅ (bugs open, G-04) | in G-04 |
-| M6 | Recording, punch, loop record, monitoring | 🟡 first cut; device choice and record-to-disk missing | 40–60 |
+| M6 | Recording, punch, loop record, monitoring | 🟡 first cut; device choice and physical disk-recording acceptance remain | 40–60 |
 | M7 | MIDI and notation editing | 🟡 | 50–80 |
 | M8 | CLI, control channel, MCP, agent acceptance test | ✅ | 3 |
 | M9 | AudioSuite breadth ✅, Elastic Audio 🟡, Beat Detective 🟡 | 🟡 | 40–60 |
@@ -92,10 +92,13 @@ remaining languages.
 There is no `cargo xtask scorecard` in this repo; the measured number is `cargo xtask parity`
 ([`parity-checklist.md`](parity-checklist.md)).
 
+Integrated workflow details and remaining validation: [fork integration](fork-integration.md). Existing percentages and hours remain prior estimates.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Recorded eight combined workflows and their residual checks without changing stage or estimates |
 | 2026-10-12 | minor | Recorded bounded manual audio relink progress without changing stage/readiness estimates |
 | 2026-10-12 | minor | Added bounded batch track naming progress; retained stage and estimates |
 | 2026-10-10 | minor | Added the alpha gate (3 of 6 core workflows fail → pre-alpha) |

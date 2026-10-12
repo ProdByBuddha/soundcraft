@@ -22,18 +22,19 @@ little- and big-endian payload bytes, check distinct six-channel values bit for 
 nonfinite samples and integer clipping/dither, and inspect streamed take payloads as well as
 folder and bundle reloads.
 
-When integrating with relink work, fixtures that generate a Float32 source containing `1.25`
-must expect `1.25` after a save/reopen, rather than the old encoder's clipped `1.0`. This
-change does not alter source identity or relink matching.
+The integrated relink fixture retains a Float32 source containing `1.25` after save/reopen
+and relink. Saved identity still describes actual encoded-and-decoded PCM; matching rules
+are unchanged. Recovery regression coverage also retains headroom with reused source IDs.
 
 The behavior reference is the Pro Tools Reference Guide 2026.4, printed page 1625 (PDF page
 1727), which describes 32-bit float output for export/reimport and session exchange. This
-fix addresses sample preservation; export sample-rate selection, additional conversion and
-dither controls, and other mixdown options remain separate work. No Pro Tools runtime
+fix addresses sample preservation. [Bounce delivery rate](bounce-sample-rate.md) is integrated
+separately; additional conversion/dither controls and other mixdown options remain. No Pro Tools runtime
 comparison is claimed.
 
 ## Revision history
 
 | Date | Change |
 |---|---|
+| 2026-10-12 | Combined finite Float32 persistence with relink identities, recovery media reuse and independent Bounce Mix delivery rate; matching rules unchanged. |
 | 2026-10-12 | Preserve finite Float32 file samples and consistently silence nonfinite samples; add payload, recording and session-persistence coverage. |
