@@ -445,13 +445,17 @@ fn delete(e: &mut Engine, p: &Value) -> Result<Value> {
 fn rename(e: &mut Engine, p: &Value) -> Result<Value> {
     let t = track_param(e, "track.rename", p, "track")?.ok_or_else(|| bad("track.rename", "`track` required"))?;
     let name = str_param(p, "name").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad("track.rename", "`name` required"))?;
-    let s = e.session_mut();
+    // Validate the stored name, including its existing 64-character limit.
+    let name: String = name.chars().take(64).collect();
+    let s = e.session();
     if s.tracks.iter().any(|x| x.name == name && x.id != t) {
         return Err(bad("track.rename", format!("a track named `{name}` already exists")));
     }
-    if let Some(tr) = s.track_mut(t) {
-        tr.name = name.chars().take(64).collect();
+    if s.track(t).is_some_and(|tr| tr.name == name) {
+        return Ok(json!({"name": name}));
     }
+    let tr = e.session_mut().track_mut(t).ok_or_else(|| bad("track.rename", "unknown track"))?;
+    tr.name.clone_from(&name);
     Ok(json!({"name": name}))
 }
 
