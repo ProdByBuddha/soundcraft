@@ -13,6 +13,7 @@ pub enum Dialog {
     NewTracks { count: u32, format: String, kind: String, timebase: String, name: String },
     NewSession { name: String, sample_rate: u32, demo: bool },
     Bounce { path: String, format: String, bit_depth: String, normalize: bool },
+    TrackBounce(crate::track_bounce_dialog::TrackBounceDialog),
     RenameTrack { id: TrackId, name: String },
     RenameClip { id: ClipId, name: String },
     ClearClips { clips: Vec<ClipId>, sources: Vec<SourceId>, message: String },
@@ -40,6 +41,7 @@ impl Dialogs {
             Dialog::NewTracks { .. } => "new_tracks",
             Dialog::NewSession { .. } => "new_session",
             Dialog::Bounce { .. } => "bounce",
+            Dialog::TrackBounce(_) => "track_bounce",
             Dialog::RenameTrack { .. } => "rename_track",
             Dialog::RenameClip { .. } => "rename_clip",
             Dialog::ClearClips { .. } => "clear_clips",
@@ -59,6 +61,11 @@ impl Dialogs {
         self.open = Some(Dialog::RenameTrack { id, name: name.to_string() });
     }
 
+    pub fn open_track_bounce(&mut self, e: &Engine, tracks: Vec<TrackId>) {
+        self.after_save = None;
+        self.open = Some(Dialog::TrackBounce(crate::track_bounce_dialog::TrackBounceDialog::new(e, tracks, default_dir())));
+    }
+
     pub fn open_rename_clip(&mut self, id: ClipId, name: &str) {
         self.open = Some(Dialog::RenameClip { id, name: name.to_string() });
     }
@@ -75,6 +82,10 @@ impl Dialogs {
         self.after_save = None;
         let home = default_dir();
         let name = e.session().name.clone();
+        if id == "track.bounce" {
+            self.open_track_bounce(e, e.target_tracks());
+            return true;
+        }
         self.open = Some(match id {
             "clip.clear" => {
                 let ed = &e.session().edit;
@@ -259,6 +270,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
         Dialog::NewTracks { .. } => "New Tracks",
         Dialog::NewSession { .. } => "New Session",
         Dialog::Bounce { .. } => "Bounce Mix",
+        Dialog::TrackBounce(_) => "Track Bounce",
         Dialog::RenameTrack { .. } => "Rename Track",
         Dialog::RenameClip { .. } => "Rename Clip",
         Dialog::ClearClips { .. } => "Clear",
@@ -282,6 +294,11 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
             match &mut d {
+                Dialog::TrackBounce(dialog) => {
+                    if let Some(params) = dialog.show(app, ui, enter) {
+                        action = Some(("track.bounce".into(), params));
+                    }
+                }
                 Dialog::NewTracks { count, format, kind, timebase, name } => {
                     ui.horizontal(|ui| {
                         ui.label("Create");
@@ -549,6 +566,9 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
             }
         });
     if esc || ctx.memory(|m| m.data.get_temp::<bool>(egui::Id::new("dlg_cancel")).unwrap_or(false)) {
+        if matches!(d, Dialog::TrackBounce(_)) {
+            action = None;
+        }
         keep = false;
         app.dialogs.after_save = None;
         ctx.memory_mut(|m| m.data.remove::<bool>(egui::Id::new("dlg_cancel")));

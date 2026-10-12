@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first format inventory against Pro Tools 2026.4.1) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (partial Track Bounce delivery evidence; assessment unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every format Pro Tools reads or writes, and ours. The Pro Tools list comes from the document types
 its bundle declares (`CFBundleDocumentTypes` in Info.plist: names only, nothing else read) and its
@@ -49,6 +49,10 @@ Legend: ✅ supported and tested · 🟡 partial · ❌ missing · — not appli
 | iXML / polyphonic field-recorder metadata | read | ❌ | ❌ | G-17 |
 | Peak overviews | `.wfm` cache | ✅ (own, in memory) | — | `audio-io::peaks`; not cached on disk |
 
+**SC-MX37 — Track Bounce delivery: partial.** [Selected Audio/built-in Instrument exports](track-bounce-files.md) use explicit destinations and existing session-rate WAV/AIFF/FLAC codecs without editing the document. WAV/AIFF support 16/24-bit integer and 32-bit float; FLAC supports 16/24-bit integer, up to eight channels and 655350 Hz. WAV layout masks, decoded frames and widths up to 16 channels are tested. A delivered mono/48 kHz PCM24 WAV was independently decoded. Native publication currently requires Unix and a hard-link-capable filesystem; single-file web delivery compiles but has no observed browser download. Windows native delivery, hosted/Aux/Master/real-time/multipath paths, sample-rate conversion, mono-file grouping and other manual options remain open. No format readiness or hour estimate changes.
+
+Standalone Track Bounce Float32 output inherits the baseline codec's over-range clipping. Own PR #345 integration and a separate over-range delivery round-trip are required before removing that limitation; this feature does not change the codecs.
+
 ## MIDI and notation
 
 | Format | Pro Tools | Read | Write | Tests / notes |
@@ -80,4 +84,5 @@ Legend: ✅ supported and tested · 🟡 partial · ❌ missing · — not appli
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Recorded partial SC-MX37 selected-track format/delivery evidence and Float32/platform residuals; assessment values unchanged |
 | 2026-10-10 | major | Created: format inventory against Pro Tools 2026.4.1's declared document types and import/bounce options |

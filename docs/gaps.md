@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (alpha blockers marked after the core-workflow gate) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Track Bounce residuals recorded as partial; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -192,9 +192,16 @@ Bounce writes WAV/BWF/RF64, AIFF and FLAC; Pro Tools also writes MP3 and AAC/M4A
 Collaboration, cloud projects, Sketch, Splice, Learn, sign-in: 11 of the 30 menu leaves still
 missing. Out of scope unless the owner decides otherwise.
 
+## Scoped manual follow-ups
+
+**SC-MX37 — Track Bounce: partial.** [Separate file delivery](track-bounce-files.md) replaces the Commit alias for selected Audio and built-in Instrument tracks. Focused tests cover explicit destinations, exact widths, volume/pan policy, range/tail boundaries, native collision/cleanup behavior and document/undo/journal immutability. Native delivery was decoded; the dialog was exercised with menu, header, shortcut, stale-preview and same-frame cancellation checks. The native implementation requires Unix and hard-link-capable destinations; web supports one file through the existing download hook, verified at compilation only.
+
+Remaining: Aux/Master and hosted processing, latency-producing effects, real-time/hardware paths, multipath delivery, Windows native publication, dual/multi-mono grouping, sample-rate conversion, naming/preset/import-after-bounce workflows, progress/cancellation and Audio effect prehistory. Clip-effect tails do not independently continue beyond capture end. Standalone Float32 output inherits the existing codec headroom limitation. This follow-up does not close the broader ranked gaps or change their estimates.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Recorded partial SC-MX37 Track Bounce support and explicit residuals; ranked gap estimates unchanged |
 | 2026-10-10 | minor | Marked the alpha blockers (G-01, G-02, G-03; parts of G-05 and G-06) from the core-workflow gate |
 | 2026-10-10 | major | Created from the full re-measure against Pro Tools Ultimate 2026.4.1: 22 ranked gaps with evidence and estimates |

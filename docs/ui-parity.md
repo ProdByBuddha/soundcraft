@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first interaction checklist against Pro Tools 2026.4.1) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (partial Track Bounce dialog evidence; assessment unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 How SoundCraft feels in the hands of a Pro Tools user: tools, modes, modifiers, shortcuts,
 windows, meters. Measured from `crates/model/src/session.rs` (tools, modes), the command
@@ -48,6 +48,9 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 | Window configurations, Tile/Cascade | 🟡 | Configurations ✅; Tile/Cascade in PR #151 |
 | Plugin windows | 🟡 | Generic parameter sliders; Pro Tools plugins have bespoke GUIs (#138 asks for skeuomorphic design); multi-page plugin views (#6) |
 | Command palette (Search) | ✅ | Over every command |
+| Track Bounce dialog (SC-MX37) | 🟡 partial | Track menu, clicked-track header menu and Cmd/Ctrl+Alt+Shift+B share an immutable source/range/revision preview. Explicit destination, format/depth/dither, volume/pan and tail controls; stale previews disable delivery, document replacement closes the dialog, and Cancel/Escape plus Enter cannot export |
+
+The [Track Bounce subset](track-bounce-files.md) has five original UI tests and an inspected 3200×2000 dialog image. Unix native delivery requires hard-link-capable destinations; web supports one file through the existing hook, with compilation evidence only. Aux/Master, hosted/latency-producing processing, real-time/multipath delivery and Windows native delivery remain unsupported. Audio effects start cold and clip effects have no independent postselection tails; standalone Float32 retains the baseline codec headroom limitation. Rendering has no progress display or mid-render cancellation. This scoped update does not remeasure shortcut counts, UI fidelity or hour estimates.
 
 ## Look and meters
 
@@ -64,4 +67,5 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added partial SC-MX37 dialog interaction evidence and bounded delivery/format limits; assessment values unchanged |
 | 2026-10-10 | major | Created: tools, modes, shortcuts, windows and meters checklist against Pro Tools 2026.4.1 |

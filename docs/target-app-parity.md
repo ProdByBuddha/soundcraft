@@ -1,6 +1,6 @@
 # Target-app parity: SoundCraft vs Avid Pro Tools
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (hours to ~95 % for each audience; full number confirmed as an additive weighted sum) · **Target:** Avid Pro Tools Ultimate 2026.4.1 (bundle 26.4.1.179, macOS)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (partial Track Bounce evidence; assessment values unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1 (bundle 26.4.1.179, macOS)
 
 The authoritative assessment of how close SoundCraft is to Pro Tools. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it, [`gaps.md`](gaps.md) itemizes every shortfall, and the per-dimension docs go deeper:
@@ -193,6 +193,8 @@ Weights by what Pro Tools users actually spend time on. **Breadth** = the featur
 | Agent control (CLI, control channel, MCP) | 1 % | 100 % | **100 %** | 3 | Ahead of Pro Tools' scripting SDK; one open bug (#145) |
 | **Weighted** | 100 % | **~70 %** | **~45 %** | **~520–810** | |
 
+**SC-MX37 — Track Bounce: partial.** [Dedicated selected-track file delivery](track-bounce-files.md) has original SoundCraft engine/native/UI tests and a decoded native artifact. It preserves document state and separates export from Commit. The verified subset is Audio/built-in Instrument rendering to Unix hard-link-capable destinations; the single-file web path compiles but has no browser delivery observation. Hosted processing, Aux/Master, latency-producing effects, real-time/hardware and multipath delivery, Windows native publication and other manual options remain unsupported. This is source and synthetic SoundCraft evidence, not a Pro Tools output comparison. All table weights, assessment values, hour estimates and stage remain unchanged.
+
 ## Stage
 
 **Pre-alpha.** Readiness (~40 %) is at the alpha bar, but the core-workflow gate
@@ -245,6 +247,7 @@ serializes more, because it needs hands-on testing.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Recorded partial SC-MX37 Track Bounce evidence and limits without re-measuring any assessment value |
 | 2026-10-10 | minor | Readiness-by-audience table: hours to ~95 % for full (950–1,450 h), mainstream (380–600 h) and essentials (110–200 h). The full number is already the additive weighted sum over the written dimension table (40.6 %); method unchanged |
 | 2026-10-10 | minor | Added the mainstream-practitioner (~36 %) and essentials-user (~57 %) numbers with written weights, discounts and user evidence. Checked the full ~40 %: it is the written dimension weights × values (40.6 %), so it doesn't move |
 | 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate; alpha distance ~110–180 h |
