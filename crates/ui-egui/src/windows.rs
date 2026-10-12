@@ -4,7 +4,7 @@ use crate::SoundApp;
 use crate::theme::{Tokens, mono, rgb};
 use egui::{Color32, Sense, vec2};
 use serde_json::json;
-use soundcraft_model::{AutomationMode, ClipContent};
+use soundcraft_model::{AutomationMode, ClipContent, SourceId};
 
 pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
     audio_health(app, ctx);
@@ -26,6 +26,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
 
 fn audio_health(app: &mut SoundApp, ctx: &egui::Context) {
     let mut open = app.ui.show_audio_health;
+    let mut relink = None;
     win(ctx, &mut open, "Session Audio Health", vec2(620.0, 360.0), |ui| {
         let refresh = ui.button("Refresh Report").clicked();
         if app.audio_health_report.is_none() || refresh {
@@ -60,6 +61,15 @@ fn audio_health(app: &mut SoundApp, ctx: &egui::Context) {
                                 if let Some(path) = issue["path"].as_str() {
                                     ui.label(path);
                                 }
+                                if issue["code"] == "unavailable_audio"
+                                    && !cfg!(target_arch = "wasm32")
+                                    && let Some(id) = issue["source_id"].as_u64().map(SourceId)
+                                    && app.engine.session().source(id).is_some()
+                                    && !app.engine.session().pool.contains(id)
+                                    && ui.button("Relink Audio…").clicked()
+                                {
+                                    relink = Some(id);
+                                }
                             });
                         }
                     }
@@ -72,6 +82,9 @@ fn audio_health(app: &mut SoundApp, ctx: &egui::Context) {
             }
         }
     });
+    if let Some(source) = relink {
+        app.dialogs.open_relink(&app.engine, source);
+    }
     app.ui.show_audio_health = open;
     if !open {
         app.audio_health_report = None;

@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (alpha blockers marked after the core-workflow gate) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (manual audio relink implemented; broader recovery remains) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -160,8 +160,11 @@ varispeed, high-quality offline) plus Elastic Pitch and warp-marker editing dept
 
 ### G-16. Session management
 
-No session templates, track presets, workspace/sound browser with previews, batch rename (new in
-2026.4), disk-usage and relink depth. ≈ 25–40 h.
+Broader session management still needs template/preset depth, workspace/sound browser previews,
+batch rename (new in 2026.4), disk-usage depth, automatic folder search or batch relink. User-selected missing-audio
+relink now checks metadata and a saved PCM identity, requires explicit legacy confirmation,
+and supports undo/redo and save/reopen ([media-relink.md](media-relink.md)). Video and interchange
+relink are outside this audio workflow. The broader G-16 estimate remains ≈ 25–40 h pending review.
 
 ### G-17. Video and post
 
@@ -196,5 +199,6 @@ missing. Out of scope unless the owner decides otherwise.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Narrowed G-16: manual audio relink added; automatic/batch searches and broader session management remain |
 | 2026-10-10 | minor | Marked the alpha blockers (G-01, G-02, G-03; parts of G-05 and G-06) from the core-workflow gate |
 | 2026-10-10 | major | Created from the full re-measure against Pro Tools Ultimate 2026.4.1: 22 ranked gaps with evidence and estimates |
