@@ -149,6 +149,7 @@ const DIALOG_COMMANDS: &[&str] = &[
     "track.new",
     "track.batch_rename",
     "file.bounce_mix",
+    "track.bounce",
     "session.new",
     "file.import_audio",
     "file.import_midi",

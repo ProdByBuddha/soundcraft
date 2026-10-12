@@ -193,6 +193,8 @@ Weights by what Pro Tools users actually spend time on. **Breadth** = the featur
 | Agent control (CLI, control channel, MCP) | 1 % | 100 % | **100 %** | 3 | Ahead of Pro Tools' scripting SDK; one open bug (#145) |
 | **Weighted** | 100 % | **~70 %** | **~45 %** | **~520–810** | |
 
+**SC-MX37 — Track Bounce: partial.** [Dedicated selected-track file delivery](track-bounce-files.md) has original SoundCraft engine/native/UI tests and a decoded native artifact. It preserves document state and separates export from Commit. The verified subset is Audio/built-in Instrument rendering to Unix hard-link-capable destinations; the single-file web path compiles but has no browser delivery observation. Hosted processing, Aux/Master, latency-producing effects, real-time/hardware and multipath delivery, Windows native publication and other manual options remain unsupported. This is source and synthetic SoundCraft evidence, not a Pro Tools output comparison. All table weights, assessment values, hour estimates and stage remain unchanged.
+
 ## Stage
 
 **Pre-alpha.** Readiness (~40 %) is at the alpha bar, but the core-workflow gate
@@ -248,6 +250,7 @@ Integrated workflow details and remaining validation: [fork integration](fork-in
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-12 | minor | Recorded integrated workflow scope and corrected obsolete RAM-take statements; no readiness remeasurement |
+| 2026-10-12 | minor | Recorded partial SC-MX37 Track Bounce evidence and limits without re-measuring any assessment value |
 | 2026-10-10 | minor | Readiness-by-audience table: hours to ~95 % for full (950–1,450 h), mainstream (380–600 h) and essentials (110–200 h). The full number is already the additive weighted sum over the written dimension table (40.6 %); method unchanged |
 | 2026-10-10 | minor | Added the mainstream-practitioner (~36 %) and essentials-user (~57 %) numbers with written weights, discounts and user evidence. Checked the full ~40 %: it is the written dimension weights × values (40.6 %), so it doesn't move |
 | 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate; alpha distance ~110–180 h |

@@ -30,6 +30,7 @@ mod sampler;
 mod setup_more;
 mod surround;
 mod track;
+mod track_bounce;
 mod track_more;
 mod track_rename;
 mod transport;
@@ -108,6 +109,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(view::specs());
         v.extend(track::specs());
         v.extend(track_rename::specs());
+        v.extend(track_bounce::specs());
         v.extend(clip::specs());
         v.extend(event::specs());
         v.extend(mix::specs());

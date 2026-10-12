@@ -64,6 +64,8 @@ Status: ✅ done · 🟡 in progress · ⬜ not started.
 | M16 | Built-in plugin depth, sidechain, ARA | ⬜ | 110–170 |
 | M17 | Immersive delivery (ADM BWF, object renderer, binaural) and video depth | ⬜ | 80–130 |
 
+**M0–M4 follow-up, SC-MX37: partial.** [Track Bounce file delivery](track-bounce-files.md) is separate from Commit and preserves the open document. Selected Audio/built-in Instrument files, preview/revision gating, volume/pan policy and explicit range/tails have focused native and UI evidence. Hosted processing, Aux/Master, real-time paths, Windows native publication and the remaining documented manual options are still open. This bounded follow-up does not change the alpha gate, milestone estimates or readiness numbers.
+
 ## To beta (~350–570 h, about 60–70 % parallelizable)
 
 Beta needs ~75 % ready for real work and no blocking gap in session interchange.
@@ -101,5 +103,6 @@ Integrated workflow details and remaining validation: [fork integration](fork-in
 | 2026-10-12 | minor | Recorded eight combined workflows and their residual checks without changing stage or estimates |
 | 2026-10-12 | minor | Recorded bounded manual audio relink progress without changing stage/readiness estimates |
 | 2026-10-12 | minor | Added bounded batch track naming progress; retained stage and estimates |
+| 2026-10-12 | minor | Added the partial SC-MX37 follow-up to the bounce milestone; alpha gate and estimates unchanged |
 | 2026-10-10 | minor | Added the alpha gate (3 of 6 core workflows fail → pre-alpha) |
 | 2026-10-10 | major | Created from ROADMAP.md's milestones and alpha list; added M12–M17 and the beta plan with estimates |
