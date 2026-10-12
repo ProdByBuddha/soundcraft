@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined workflow progress and residual gaps) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (bounded audio Heal correctness; advanced workflows remain) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -83,6 +83,11 @@ automation #104 (PR #134); mix/bounce #59 (PR #131), #103 (PR #133), #152; playb
 MIDI #87, #98 (PR #125); import #89 (PR #128); CLI #95, #96 (PR #126, #127); MCP #145 (PR #146);
 web #63, #64, #136; Clip List #4 (PR #75); plugin view #6; shortcuts #7, #41;
 launch #142; Linux #45, #107.
+- **2026-10-12 progress:** [Safe audio Heal](heal-safety.md) now checks adjacent same-source
+  continuity, preserves ordinary unprocessed audio and remaps removed clip selections. Refused
+  processing/metadata returns skipped reasons without changing the document or Undo/Redo.
+  Fades/envelopes/effects/stretch, MIDI/video, removed-silence restoration and the existing
+  shortcut issue #140 remain open. This narrows ED-48 without claiming general Heal parity.
 - **Impact:** each one is small, but together they say "presence is not parity": an outside
   contributor found seven in one sitting (#116–#122).
 - **Estimate:** ≈ 25–40 h at 0.5–1.5 h each, plus review of the open PRs.
@@ -206,6 +211,7 @@ Integrated workflow details and remaining validation: [fork integration](fork-in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Narrowed G-04 with safe unprocessed audio Heal; advanced Heal and shortcut residuals remain |
 | 2026-10-12 | minor | Narrowed native recording allocation and session management gaps; physical-volume, source-streaming and advanced workflow checks remain |
 | 2026-10-12 | minor | Narrowed G-16: manual audio relink added; automatic/batch searches and broader session management remain |
 | 2026-10-12 | minor | Narrowed G-16: bounded batch track naming added; advanced controls and clip/file workflows remain |

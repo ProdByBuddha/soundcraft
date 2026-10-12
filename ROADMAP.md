@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~5% and ~110–180 h away (the alpha gate's three failing workflows)
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (integrated recording, editing and delivery workflows) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (safe audio Heal; integrated workflow estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 SoundCraft is a clean-room, pure-Rust digital audio workstation that aims at full parity with
 Avid Pro Tools, and then beyond it: faster, open, scriptable and agent-controllable. This page is
@@ -122,6 +122,7 @@ mutated and truncated movies. Field reports from the first public week are track
 
 ## Progress log
 
+- **2026-10-12 (safe audio Heal):** ordinary contiguous unprocessed audio splits merge without changing their samples, with selection remapping and one Undo. Unsupported fades, envelopes, effects, stretch, locks/groups and per-ID processing history return structured skipped reasons; no-op commands preserve document/history state. Advanced Heal and removed-silence restoration remain open; no stage/readiness/hours change. See [heal-safety.md](docs/heal-safety.md).
 - **2026-10-12 (combined fork workflows):** recording allocation reaches native take planning; Commit retains supported exact channel layouts; recovery isolates each document and validates reused bytes; Float32 files retain finite headroom; single-track names validate their stored form; Bounce Mix selects an independent delivery rate. These combine with the relink and batch naming workflows below. Physical-volume tests, broader Commit/delivery policies, recovery controls and independent fidelity checks remain. No readiness or hours remeasurement. See [fork-integration.md](docs/fork-integration.md).
 - **2026-10-12 (audio relink):** Session Audio Health offers user-selected relinking of missing audio with exact decoded PCM identity and metadata checks. Legacy sessions require explicit confirmation when no identity exists. Commands preserve source IDs, clips, timing and alternate takes, support undo/redo and save/reopen, and never open programmatic dialogs. Saved-file identities reflect the actual WAV PCM; autosave byte checks preserve earlier recordings. Automatic searches, batch relinking, video and interchange relinking remain out of scope. No readiness percentage change. See [media-relink.md](docs/media-relink.md).
 - **2026-10-12 (batch track naming):** selected tracks support literal replacement, end trimming, prefix/suffix text and decimal numbering with an old/new preview, atomic collision checks and one Undo. Edit, Mix and Track List context entries plus the manual shortcut are available. Advanced controls and clip/file naming remain; no readiness percentage or hours estimate change. See [batch-track-rename.md](docs/batch-track-rename.md).
@@ -148,6 +149,7 @@ Integrated workflow details and remaining validation: [fork integration](docs/fo
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Bounded audio Heal preserves unprocessed material and refuses unsupported clip semantics; estimates unchanged |
 | 2026-10-12 | minor | Combined recording allocation, exact Commit layouts, isolated recovery, PCM-validated relink, Float32 preservation, stored/batch track names and Bounce Mix delivery rate; estimates unchanged |
 | 2026-10-12 | minor | Added user-selected missing-audio relink; G-16 remains open for broader session management |
 | 2026-10-12 | minor | Added bounded batch track naming; advanced manual controls remain, estimates unchanged |
