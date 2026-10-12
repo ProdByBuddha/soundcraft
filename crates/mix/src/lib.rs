@@ -60,6 +60,7 @@ use soundcraft_time::{Range, Samples};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod send_automation;
 pub mod track_bounce;
 
 /// Default (stereo) main mix width. The actual width is [`main_channels`].
@@ -754,22 +755,38 @@ impl MixEngine {
         let law = self.pan_law;
         for (i, snd) in t.mixer.sends.iter().enumerate() {
             let Some(snd) = snd else { continue };
-            if snd.mute || strip.muted {
+            if strip.muted {
+                continue;
+            }
+            let src = if snd.pre_fader { &strip.pre } else { &strip.buf };
+            let Route::Bus(b) = &snd.target else { continue };
+            let Some(dst) = self.busses.get_mut(b) else { continue };
+            let ordinary = !src_fmt.is_ambisonic() && !dst.fmt.is_ambisonic();
+            let mute = ordinary.then(|| send_automation::Reader::for_send(t, AutoParam::SendMute, i, pos)).flatten();
+            if mute.is_none() && snd.mute {
                 continue;
             }
             let lvl = send_level(t, i, snd.level_db, pos);
             let gain = db_to_gain(lvl);
-            let src = if snd.pre_fader { &strip.pre } else { &strip.buf };
-            let Route::Bus(b) = &snd.target else { continue };
-            let Some(dst) = self.busses.get_mut(b) else { continue };
             if gain <= 0.0 {
+                continue;
+            }
+            let pan = (ordinary && src.len() == 1 && dst.fmt == ChannelFormat::Stereo)
+                .then(|| send_automation::Reader::for_send(t, AutoParam::SendPan, i, pos))
+                .flatten();
+            if let Some(pan) = pan {
+                send_automation::apply_mono_stereo(src, frames, &mut dst.buf, gain, law, pos, pan, mute);
                 continue;
             }
             // Mono sends use the send's own pan; stereo sends go straight to L/R.
             let stereo = if src.len() == 1 { [snd.pan, 0.0] } else { [-1.0, 1.0] };
             let surround = snd.surround.as_ref().or(if snd.follow_main_pan { t.mixer.surround.as_ref() } else { None });
             let m = build_matrix(src_fmt, src.len(), dst.fmt, dst.buf.len(), &PanSpec { stereo, surround }, law);
-            apply_matrix(src, frames, &mut dst.buf, &m, gain);
+            if let Some(mute) = mute {
+                send_automation::apply_gated(src, frames, &mut dst.buf, &m, gain, pos, mute);
+            } else {
+                apply_matrix(src, frames, &mut dst.buf, &m, gain);
+            }
         }
         let spec = PanSpec { stereo: [pan_at(t, 0, pos), pan_at(t, 1, pos)], surround: t.mixer.surround.as_ref() };
         match &t.mixer.output {
