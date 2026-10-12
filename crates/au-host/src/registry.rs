@@ -42,9 +42,10 @@ fn version_string(v: u32) -> String {
 }
 
 fn list() -> Vec<AuDescriptor> {
+    let manufacturers = crate::discovery::manufacturers(std::env::var_os("SOUNDCRAFT_AU_MANUFACTURERS").as_deref());
     let mut out: Vec<AuDescriptor> = Vec::new();
     for ty in SUPPORTED_TYPES {
-        for c in ffi::components(ty) {
+        for c in crate::discovery::enumerate(&manufacturers, |manufacturer| ffi::components(ty, manufacturer)) {
             let id = crate::format_id(c.ty, c.subtype, c.manufacturer);
             if out.iter().any(|o| o.id == id) {
                 continue;

@@ -257,9 +257,14 @@ pub struct RawComponent {
     pub version: u32,
 }
 
-/// Every component of type `ty` that can be instantiated synchronously.
-pub fn components(ty: u32) -> Vec<RawComponent> {
-    let desc = AudioComponentDescription { component_type: ty, ..Default::default() };
+fn component_query(ty: u32, manufacturer: Option<u32>) -> AudioComponentDescription {
+    AudioComponentDescription { component_type: ty, component_manufacturer: manufacturer.unwrap_or(0), ..Default::default() }
+}
+
+/// Every matching component that can be instantiated synchronously. Manufacturer restrictions
+/// reach AudioComponentFindNext before name/version reads or instance creation.
+pub fn components(ty: u32, manufacturer: Option<u32>) -> Vec<RawComponent> {
+    let desc = component_query(ty, manufacturer);
     let mut out = Vec::new();
     let mut comp: AudioComponent = ptr::null_mut();
     for _ in 0..MAX_COMPONENTS {
@@ -765,5 +770,19 @@ mod tests {
         assert_eq!(std::mem::offset_of!(AudioUnitParameterInfo, cf_name_string), 72);
         assert_eq!(std::mem::offset_of!(AudioUnitParameterInfo, flags), 96);
         assert_eq!(std::mem::size_of::<AudioUnitParameterInfo>(), 104);
+    }
+}
+
+#[cfg(test)]
+mod discovery_policy_tests {
+    use super::*;
+
+    #[test]
+    fn component_query_filters_manufacturer_at_the_os_boundary() {
+        let query = component_query(u32::from_be_bytes(*b"aufx"), Some(u32::from_be_bytes(*b"appl")));
+        assert_eq!(query.component_type, u32::from_be_bytes(*b"aufx"));
+        assert_eq!(query.component_manufacturer, u32::from_be_bytes(*b"appl"));
+        assert_eq!(query.component_sub_type, 0);
+        assert_eq!(component_query(query.component_type, None).component_manufacturer, 0);
     }
 }

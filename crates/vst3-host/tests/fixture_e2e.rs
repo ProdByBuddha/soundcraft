@@ -31,6 +31,11 @@ fn scan_lists_both_audio_modules_but_not_the_controller_class() {
     let s = found.iter().find(|d| d.name == "Fixture Synth").unwrap();
     assert_eq!(s.category, Category::Instrument);
     assert!(s.is_instrument);
+    if std::env::var_os("SOUNDCRAFT_VST3_SEARCH_PATHS").is_some_and(|paths| paths.is_empty()) {
+        let rescanned = soundcraft_vst3_host::rescan();
+        assert_eq!(rescanned.len(), 2, "exclusive empty automatic roots retain only the explicitly added fixture");
+        assert!(rescanned.iter().all(|d| d.path.starts_with(dir)));
+    }
     let global = soundcraft_vst3_host::scan();
     assert!(global.iter().any(|d| d.id == g.id) && global.iter().any(|d| d.id == s.id));
 }
