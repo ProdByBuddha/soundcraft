@@ -1,6 +1,6 @@
 # Fork integration scope
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined fork scope and remaining validation)
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined fork scope, verified CI boundary and DCO workflow)
 
 ## Fork integration, 2026-10-12
 
@@ -13,7 +13,10 @@ Stage, readiness percentages and remaining-hours estimates have not been remeasu
 The fork's `main` branch is our ongoing integration target. Start new feature branches from
 its verified current head. The coordinating agent reviews exact source, evidence and combined
 interactions before a history-preserving merge and push to fork `main`. Upstream contributions
-remain a separate workflow with their own review and acceptance state.
+remain a separate workflow with their own review and acceptance state. Every new topic, merge and documentation
+commit uses `git commit -s` with the actual author identity. Audit new PR commits for matching
+`Signed-off-by` trailers before merging. For an unmerged branch with no downstream work, a
+message-only amendment may use an explicit old-head force-with-lease; verify the tree is unchanged.
 
 | Workflow | Integrated behavior | Remaining scope |
 |---|---|---|
@@ -46,15 +49,23 @@ Heal preserves Copy's source identities and exact Track Bounce bytes for support
 material. Native and bundled copies of the healed playlist reopen with the surviving clip selection
 and unchanged PCM bits. A refused Heal keeps Copy and Track Bounce revision-bound previews current.
 
-Required `cargo xtask ci` was attempted before every merge. Its unchanged video-codec Clippy
-error stops the workspace check before tests, assets, layers and WASM. Separate scoped tests,
-strict touched-crate lint, format, assets, layers and WASM checks are recorded in the local
-integration evidence; no complete workspace CI pass or physical-device acceptance is claimed.
+Required `cargo xtask ci` was attempted before every merge. The first checkpoints stopped at
+the video-codec Clippy error. An equivalent Mp3 match guard now removes that error, and the
+combined native workspace passes all-target Clippy with warnings denied. Required CI attempts
+are stopped after Clippy and before broad native installed-plugin inventory tests, which can
+wait for licensing interaction on this workstation. Full workspace tests and a complete CI pass
+remain unverified. Scoped synthetic tests plus separate format, assets, layers and WASM checks
+are recorded in the local evidence; physical-device acceptance remains separate.
+
+When transferring a build cache between checkouts, verify the `xtask` runner's compiled repository
+root and rebuild that runner from the current checkout if needed. Its root is fixed at compilation;
+a stale runner can check the previous checkout even when Cargo is invoked from the new one.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Recorded verified video lint maintenance, the native-test runtime boundary and required DCO signoffs |
 | 2026-10-12 | minor | Added safe audio Heal integration and cross-feature Copy/Track Bounce identity, output and no-op preview regressions |
 | 2026-10-12 | minor | Added strict Copy integration, saved-PCM identities and combined immutable-state/dialog regressions |
 | 2026-10-12 | minor | Added Track Bounce integration scope and verified Float32/rendering boundaries |
