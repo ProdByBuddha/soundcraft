@@ -5,7 +5,7 @@
 ## Fork integration, 2026-10-12
 
 The first fork checkpoint combined eight published changes while retaining each source commit and its history.
-Later waves add reviewed Track Bounce file delivery and strict Save Session Copy In on that verified head.
+Later waves add reviewed Track Bounce file delivery, strict Save Session Copy In and safe audio Heal on that verified head.
 This is source integration with synthetic regression coverage; hardware recording, installed
 licensed plug-ins, platform runtime acceptance and Pro Tools fidelity remain separate checks.
 Stage, readiness percentages and remaining-hours estimates have not been remeasured.
@@ -26,6 +26,7 @@ remain a separate workflow with their own review and acceptance state.
 | [Batch track naming](batch-track-rename.md) | Literal replace/trim/add/number stages preview and apply atomically with one Undo | Advanced transforms, presets, clip/file naming and Score/MIDI context entries |
 | [Track Bounce files](track-bounce-files.md) | Immutable selected Audio/built-in Instrument export, exact finite Float32 headroom, nonfinite no-delivery policy and source-stop tails | Unix hard-link publication and one-file web subset; hosted/Aux/Master/real-time/Windows paths, rate conversion and further manual options |
 | [Save Session Copy In](session-copy.md) | Complete declared audio, validated references and destinations, actual saved-PCM identities and detached export snapshots preserve the open document | Audio conversion/timing options, original file bytes/BWF, video and external plugin files, whole-copy rollback and browser download retention |
+| [Safe audio Heal](heal-safety.md) | Contiguous ordinary audio splits preserve rendered samples, remap selection and use one Undo; unsupported processing returns skipped reasons without consuming history | Faded/enveloped/effected/stretched clips, MIDI/video, removed-silence restoration, richer presentation/sync points and selection/shortcut fidelity |
 | [Bounce Mix delivery rate](bounce-sample-rate.md) | Independent bounded output rate, conversion and output-rate measurements | Dither/noise shaping, layout-aware loudness weighting and shared renderer workspace limits |
 
 The recorder keeps the isolated recovery directory and propagates allocation errors. Session
@@ -41,6 +42,9 @@ and signed zero, sanitize nonfinite samples, and derive saved identities from th
 Copy preserves original source identities, document revision, saved path, dirty state, Undo/Redo,
 journal and opaque plugin snapshots. Its preview revision, document replacement and same-frame
 cancellation guards coexist with Track Bounce, Batch Rename and Relink in the combined host.
+Heal preserves Copy's source identities and exact Track Bounce bytes for supported headroom
+material. Native and bundled copies of the healed playlist reopen with the surviving clip selection
+and unchanged PCM bits. A refused Heal keeps Copy and Track Bounce revision-bound previews current.
 
 Required `cargo xtask ci` was attempted before every merge. Its unchanged video-codec Clippy
 error stops the workspace check before tests, assets, layers and WASM. Separate scoped tests,
@@ -51,6 +55,7 @@ integration evidence; no complete workspace CI pass or physical-device acceptanc
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added safe audio Heal integration and cross-feature Copy/Track Bounce identity, output and no-op preview regressions |
 | 2026-10-12 | minor | Added strict Copy integration, saved-PCM identities and combined immutable-state/dialog regressions |
 | 2026-10-12 | minor | Added Track Bounce integration scope and verified Float32/rendering boundaries |
 | 2026-10-12 | minor | Combined the eight published workflows and their residual limits; retained the existing readiness estimates |

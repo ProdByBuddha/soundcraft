@@ -45,6 +45,13 @@ complete-ID key matching, malformed/overflowing arithmetic and range/point bound
 are engine and renderer regressions; they do not establish native shortcut behavior or physical
 Pro Tools fidelity.
 
+The fork's combined regression also compares exact Float32 Track Bounce bytes before and after
+Heal on stereo headroom material. Native and bundled Copy retain its source PCM identity,
+above-unity and signed-zero bits, healed selection and reopened rendered samples. Exports preserve
+the healed document/history; Undo and Redo restore the expected split/healed state. Refusing per-ID
+processing metadata leaves revision-bound Copy and Track Bounce previews unchanged. These checks
+use synthetic sources without installed plugins or physical devices.
+
 The behavior reference is [Reference Guide PDF1018 / printed916](https://resources.avid.com/SupportFiles/PT/Pro_Tools_Reference_Guide_2026.4.pdf#page=1018),
 which describes healing separated material from the same audio file while its boundaries remain
 in place. [PDF1318 / printed1216](https://resources.avid.com/SupportFiles/PT/Pro_Tools_Reference_Guide_2026.4.pdf#page=1318)
@@ -60,4 +67,5 @@ remain partial; stage, readiness percentages and hours estimates are unchanged.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Verified combined healed-source Copy identity, exact Track Bounce output and no-op preview lifetime |
 | 2026-10-12 | minor | Added bounded safe audio Heal, no-op guarantees and advanced workflow residuals |

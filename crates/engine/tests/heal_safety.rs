@@ -306,3 +306,78 @@ fn heal_empty_and_unsorted_noops_do_not_rewrite_the_playlist() {
     let mut e = Engine::new(s);
     assert_noop(&mut e, track, json!({"track": track}), None);
 }
+
+#[cfg(unix)]
+#[test]
+fn healed_headroom_material_keeps_copy_identity_and_track_bounce_while_refusals_keep_previews_current() {
+    struct Temp(std::path::PathBuf);
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let temp = Temp(std::env::temp_dir().join(format!("soundcraft-heal-copy-bounce-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&temp.0);
+    std::fs::create_dir_all(&temp.0).unwrap();
+    let (mut s, track, source, ids) = fixture(ChannelFormat::Stereo);
+    let buffer = AudioBuffer { sample_rate: 48_000, channels: vec![[1.25, -2.5, -0.0, 0.25].repeat(96), [-2.5, 1.25, -0.0, -0.25].repeat(96)] };
+    let pcm_bits: Vec<Vec<_>> = buffer.channels.iter().map(|ch| ch.iter().map(|x| x.to_bits()).collect()).collect();
+    let identity = soundcraft_engine::media::audio_identity(&buffer);
+    s.pool.insert(source, Arc::new(soundcraft_model::SourceAudio::new(buffer)));
+    s.sources.iter_mut().find(|src| src.id == source).unwrap().audio_identity = Some(identity.clone());
+    s.edit.selected_clips = ids.clone();
+    let mut e = Engine::new(s);
+    let split = e.session().clone();
+    let before_render = render(&e, track);
+    assert!(before_render.iter().flatten().any(|sample| sample.abs() > 1.0));
+    let bounce = |path: &std::path::Path| json!({"tracks":[track],"path":path,"start":0,"end":384,"bit_depth":"32f","dither":false,"render_volume":false,"render_pan":false});
+    let original_bounce = temp.0.join("split.wav");
+    e.execute("track.bounce", &bounce(&original_bounce)).unwrap();
+    let original_bytes = std::fs::read(original_bounce).unwrap();
+    assert_eq!(e.execute("edit.heal", &json!({})).unwrap(), json!({"healed":2,"skipped":[]}));
+    assert_eq!(e.session().edit.selected_clips, vec![ids[0]]);
+    assert_eq!(render(&e, track), before_render);
+    let (healed, revision, history, journal) = (e.session_arc(), e.revision, e.undo_history(), e.journal.clone());
+    let healed_bounce = temp.0.join("healed.wav");
+    e.execute("track.bounce", &bounce(&healed_bounce)).unwrap();
+    assert_eq!(std::fs::read(healed_bounce).unwrap(), original_bytes);
+    for bundled in [false, true] {
+        let mut opened = Engine::default();
+        if bundled {
+            let (bytes, report) = soundcraft_engine::session_copy::bundle(&e, &temp.0.join("Copy.scraftz").to_string_lossy()).unwrap();
+            assert!(io::open_session_bytes(&mut opened, &report.output_path, &bytes).unwrap().is_empty());
+        } else {
+            let path = temp.0.join("native/Copy.scraft");
+            e.execute("session.save_copy", &json!({"path":path,"expected_revision":revision})).unwrap();
+            assert!(io::open_session(&mut opened, &path.to_string_lossy()).unwrap().is_empty());
+        }
+        assert_eq!(opened.session().source(source).unwrap().audio_identity.as_deref(), Some(identity.as_str()));
+        let saved = &opened.session().pool.get(source).unwrap().buffer;
+        assert_eq!(saved.channels.iter().map(|ch| ch.iter().map(|x| x.to_bits()).collect::<Vec<_>>()).collect::<Vec<_>>(), pcm_bits);
+        assert_eq!(opened.session().track(track).unwrap().clips(), healed.track(track).unwrap().clips());
+        assert_eq!(opened.session().edit.selected_clips, vec![ids[0]]);
+        assert_eq!(render(&opened, track), before_render);
+        assert!(Arc::ptr_eq(&healed, &e.session_arc()));
+        assert_eq!((e.revision, e.undo_history(), e.journal.clone()), (revision, history.clone(), journal.clone()));
+    }
+    assert!(e.undo());
+    assert_eq!(e.session(), &split);
+    assert_eq!(render(&e, track), before_render);
+    assert!(e.redo());
+    assert_eq!(e.session(), healed.as_ref());
+
+    let mut refused = split;
+    refused.edit.values.insert(format!("clip_fx.{}.gain", ids[1].0), -2.0);
+    let mut e = Engine::new(refused);
+    let revision = e.revision;
+    let copy_params = json!({"path":temp.0.join("refused/Copy.scraft"),"expected_revision":revision});
+    let mut track_params = bounce(&temp.0.join("refused.wav"));
+    track_params["expected_revision"] = json!(revision);
+    let copy_preview = e.execute("session.save_copy_preview", &copy_params).unwrap();
+    let track_preview = e.execute("track.bounce_preview", &track_params).unwrap();
+    assert_noop(&mut e, track, json!({}), Some("clip_metadata"));
+    assert_eq!(e.execute("session.save_copy_preview", &copy_params).unwrap(), copy_preview);
+    assert_eq!(e.execute("track.bounce_preview", &track_params).unwrap(), track_preview);
+    assert!(!temp.0.join("refused").exists());
+    assert!(!temp.0.join("refused.wav").exists());
+}
