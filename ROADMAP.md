@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~5% and ~110–180 h away (the alpha gate's three failing workflows)
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (safe audio Heal, selection Repeat and verified CI boundary; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Heal, Repeat and bounded send playback; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 SoundCraft is a clean-room, pure-Rust digital audio workstation that aims at full parity with
 Avid Pro Tools, and then beyond it: faster, open, scriptable and agent-controllable. This page is
@@ -122,6 +122,7 @@ mutated and truncated movies. Field reports from the first public week are track
 
 ## Progress log
 
+- **2026-10-12 (SC-MX11, partial):** mono-to-stereo Bus sends read pan per sample and ordinary Bus sends read exact mute steps. Static paths, pre/post-fader sources, level law and strip suppression stay consistent. Independent synthetic PCM, chunk/seek/loop and command/history/save references cover this subset. All seven AutoParam families, broader pan contexts, suspension/writing and platform/runtime acceptance remain open. No stage/readiness/hours change. See [send-automation.md](docs/send-automation.md).
 - **2026-10-12 (ED-56, partial):** [Selection repeat](docs/selection-repeat.md) shares immutable Duplicate/Repeat/Extend planning: silent-gap replacement, aggregate Shuffle ripple, Automation Follows Edit, boundary curves and exact clip metadata copies. Unsupported musical-width and partial-processing transformations remain explicit refusals; stage and estimates are unchanged.
 - **2026-10-12 (CI maintenance):** an equivalent video Mp3 match guard removes the Rust 1.95 Clippy stop. The combined native workspace passes all-target Clippy with warnings denied. Required CI attempts stop before broad installed-plugin test runtime; full workspace tests and complete CI remain unverified. Scoped source acceptance and device/plugin runtime remain separate. See [fork-integration.md](docs/fork-integration.md). No stage/readiness/hours change.
 - **2026-10-12 (safe audio Heal):** ordinary contiguous unprocessed audio splits merge without changing their samples, with selection remapping and one Undo. Unsupported fades, envelopes, effects, stretch, locks/groups and per-ID processing history return structured skipped reasons; no-op commands preserve document/history state. Advanced Heal and removed-silence restoration remain open; no stage/readiness/hours change. See [heal-safety.md](docs/heal-safety.md).

@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (bounded audio Heal and selection Repeat; advanced workflows remain) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Heal, Repeat and bounded send playback; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -93,6 +93,8 @@ launch #142; Linux #45, #107.
 - **Impact:** each one is small, but together they say "presence is not parity": an outside
   contributor found seven in one sitting (#116–#122).
 - **Estimate:** ≈ 25–40 h at 0.5–1.5 h each, plus review of the open PRs.
+
+**SC-MX11 — send automation playback: partial.** [Sample-exact send consumers](send-automation.md) cover mono-to-stereo Bus pan and stepped mute on ordinary Bus routes up to 16 channels, using independent synthetic PCM and static references across chunks, seek/loop boundaries and command/save history. This narrows the send consumer gap in G-04; the full seven-family AutoParam reference matrix, other send-pan layouts/routes, global enable/suspend migration, writing/safing and platform/runtime acceptance remain open. Existing mixer estimates are unchanged.
 
 **ED-56 remains partial.** [Bounded selection repeat](selection-repeat.md) addresses arrangement automation, copied silence, Shuffle and metadata identity. Fractional/variable-tempo material mapping, automation-only views, note-only MIDI and processed fragments remain; this does not close G-04 or change its estimate.
 
@@ -220,6 +222,7 @@ Remaining: Aux/Master and hosted processing, latency-producing effects, real-tim
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Recorded bounded SC-MX11 send pan/mute playback and full automation residuals; estimates unchanged |
 | 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
 | 2026-10-12 | minor | Narrowed G-04 with safe unprocessed audio Heal; advanced Heal and shortcut residuals remain |
 | 2026-10-12 | minor | Narrowed native recording allocation and session management gaps; physical-volume, source-streaming and advanced workflow checks remain |
