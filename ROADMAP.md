@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~5% and ~110–180 h away (the alpha gate's three failing workflows)
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Heal, Repeat, send playback, native track names and verified CI; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Master post-fader reference acceptance added to combined workflows; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 SoundCraft is a clean-room, pure-Rust digital audio workstation that aims at full parity with
 Avid Pro Tools, and then beyond it: faster, open, scriptable and agent-controllable. This page is
@@ -122,6 +122,7 @@ mutated and truncated movies. Field reports from the first public week are track
 
 ## Progress log
 
+- **2026-10-12 (SC-MX02 native reference acceptance):** Master Fader gain now precedes its serial inserts, with unity copyback and output metering. Eight Mix and three Engine tests pass against independent nonlinear limiter references, including fader changes, ordinary pre-fader inserts, bypass/cascade, endpoint edges and native/strict Copy reopen. The Master ramp uses the last included frame; this is not sample-exact Volume automation or complete SC-MX11 acceptance. Hosted/hardware processing, Master routing/PDC and dither fidelity remain separate. No stage/readiness/hours change. See [master-post-fader.md](docs/master-post-fader.md).
 - **2026-10-12 (stored track-name acceptance):** a native two-track regression sets distinct multiline Unicode comments through commands, renames a track, rejects an occupied name without consuming pending Redo, then saves and opens the file in a fresh engine. Full Track objects, names and comments remain associated with their original IDs. UI dialog behavior and folder/output-bus label synchronization remain separate; no stage/readiness/hours change. See [fork-integration.md](docs/fork-integration.md).
 - **2026-10-12 (isolated plugin CI):** the published isolation checkpoint completed all six `cargo xtask ci` gates with the unfiltered workspace test command. Automatic discovery excludes external installed CLAP/VST3 roots and uses Apple system Audio Units, while owned host fixtures retain processing/state/editor/shutdown coverage. Observed loader events include those fixtures and Apple CoreAudio, with no external installed-plugin paths; external plugin, device and platform acceptance remain separate. See [plugin-test-isolation.md](docs/plugin-test-isolation.md). No stage/readiness/hours change.
 - **2026-10-12 (SC-MX11, partial):** mono-to-stereo Bus sends read pan per sample and ordinary Bus sends read exact mute steps. Static paths, pre/post-fader sources, level law and strip suppression stay consistent. Independent synthetic PCM, chunk/seek/loop and command/history/save references cover this subset. All seven AutoParam families, broader pan contexts, suspension/writing and platform/runtime acceptance remain open. No stage/readiness/hours change. See [send-automation.md](docs/send-automation.md).
@@ -156,6 +157,7 @@ Integrated workflow details and remaining validation: [fork integration](docs/fo
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Verified SC-MX02 Master post-fader order with independent nonlinear PCM and command/native persistence references; broader runtime and estimates unchanged |
 | 2026-10-12 | minor | Verified native single-track rename/conflict/comment persistence by ID through Save/Open; broader label synchronization and estimates unchanged |
 | 2026-10-12 | minor | Recorded the completed isolated workspace CI checkpoint and retained separate external-plugin/device acceptance; estimates unchanged |
 | 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |

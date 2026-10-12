@@ -1,6 +1,6 @@
 # SoundCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Heal, Repeat, send playback and native track-name persistence; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Master post-fader reference acceptance added to combined workflows; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Forward-looking plan. Status and numbers: [`../ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the ranked work list: [`gaps.md`](gaps.md).
@@ -94,6 +94,8 @@ AAX, `.ptx` and Avid cloud features.
 
 **SC-MX11 follow-up: partial.** [Bounded send automation playback](send-automation.md) adds per-sample mono-to-stereo Bus pan and exact ordinary-Bus mute steps with synthetic reference and persistence evidence. The original all-AutoParam acceptance, other widths/routes, suspension/writing and actual platform/runtime checks remain. Alpha gate, milestone estimates and readiness numbers are unchanged.
 
+**SC-MX02 native reference acceptance.** [Master Fader post-fader inserts](master-post-fader.md) pass eight Mix and three Engine independent nonlinear PCM and command/persistence tests. Ordinary inserts retain pre-fader order. Master block ramps retain their declared endpoint model; complete SC-MX11 automation, hosted/hardware processing, Master routing/PDC and dither acceptance remain. Milestone completion, stage and estimates are unchanged.
+
 ## After beta (to full parity, a further ~600–900 h)
 
 Control surfaces (G-10), immersive delivery (G-12), the rest of the built-in plugin catalogue
@@ -112,6 +114,7 @@ ED-56 arrangement correctness progress: [selection repeat](selection-repeat.md) 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Verified SC-MX02 Master post-fader nonlinear reference and persistence scope; milestone completion and estimates unchanged |
 | 2026-10-12 | minor | Recorded native stored-name/conflict/comment Save/Open acceptance; broader label synchronization and estimates unchanged |
 | 2026-10-12 | minor | Recorded bounded SC-MX11 send pan/mute playback and full automation residuals; estimates unchanged |
 | 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |

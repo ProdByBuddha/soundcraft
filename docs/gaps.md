@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Heal, Repeat, send playback and native track-name persistence; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Master post-fader reference acceptance added to combined workflows; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -217,6 +217,8 @@ missing. Out of scope unless the owner decides otherwise.
 Integrated workflow details and remaining validation: [fork integration](fork-integration.md). Existing percentages and hours remain prior estimates.
 ## Scoped manual follow-ups
 
+**SC-MX02 — Master Fader insert order: native reference acceptance.** [Master post-fader processing](master-post-fader.md) applies gain before serial inserts and preserves ordinary pre-fader inserts. Eight Mix and three Engine tests pass with independent nonlinear limiter PCM, an audible wrong-order contrast, callback endpoint/seek/loop schedules, bypass/cascade/meters, command history and native/strict Copy reopen. Hosted/hardware inserts, Master route assignment and latency/PDC, other main widths, dither fidelity and complete seven-family SC-MX11 automation remain open. This narrows signal-order fidelity evidence without closing G-07 or changing ranked estimates.
+
 **SC-MX37 — Track Bounce: partial.** [Separate file delivery](track-bounce-files.md) replaces the Commit alias for selected Audio and built-in Instrument tracks. Focused tests cover explicit destinations, exact widths, volume/pan policy, range/tail boundaries, native collision/cleanup behavior and document/undo/journal immutability. Native delivery was decoded; the dialog was exercised with menu, header, shortcut, stale-preview and same-frame cancellation checks. The native implementation requires Unix and hard-link-capable destinations; web supports one file through the existing download hook, verified at compilation only.
 
 Remaining: Aux/Master and hosted processing, latency-producing effects, real-time/hardware paths, multipath delivery, Windows native publication, dual/multi-mono grouping, sample-rate conversion, naming/preset/import-after-bounce workflows, progress/cancellation and Audio effect prehistory. Clip-effect tails do not independently continue beyond capture end. Integrated Float32 WAV/AIFF Track Bounce retains finite headroom; nonfinite render output fails without delivery. This follow-up does not close the broader ranked gaps or change their estimates.
@@ -225,6 +227,7 @@ Remaining: Aux/Master and hosted processing, latency-producing effects, real-tim
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Verified SC-MX02 nonlinear Master post-fader reference acceptance; broader fidelity/runtime gaps and estimates remain |
 | 2026-10-12 | minor | Verified native stored-name/conflict/comment persistence; broader G-16 and label-sync scope remain |
 | 2026-10-12 | minor | Recorded bounded SC-MX11 send pan/mute playback and full automation residuals; estimates unchanged |
 | 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
