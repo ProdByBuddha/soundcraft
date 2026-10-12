@@ -4,6 +4,7 @@
 //! executing commands. It can be replaced without touching anything below it.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod batch_rename;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
@@ -359,6 +360,7 @@ impl SoundApp {
                     if matches!(self.dialogs.open, Some(dialogs::Dialog::RelinkAudio { .. })) {
                         self.dialogs.open = None;
                     }
+                    self.dialogs.clear_batch_rename();
                     self.audio_health_report = None;
                 }
                 if matches!(id, "media.relink" | "source.relink" | "edit.undo" | "edit.redo") {

@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (manual audio relink implemented; broader recovery remains) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (validated audio relink and bounded batch track rename workflows) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -30,7 +30,7 @@ When you close a gap, delete its entry (or shrink it) in the same PR, and bump t
 | G-13 | Sidechain inputs, ARA, out-of-process plugin sandboxing | Ecosystem | [plugin-parity.md](plugin-parity.md) | 30–50 |
 | G-14 | Windows/Linux/Web exercised only lightly at runtime; no PR CI running the tests | Platforms / Stability | this file | 20–40 |
 | G-15 | Elastic Audio depth: one algorithm, no Elastic Pitch | Features | [target-app-parity.md](target-app-parity.md) | 30–45 |
-| G-16 | Session templates, track presets, workspace browser, batch rename | Features | [target-app-parity.md](target-app-parity.md) | 25–40 |
+| G-16 | Session templates, track presets, workspace browser, advanced batch rename | Features | [target-app-parity.md](target-app-parity.md) | 25–40 |
 | G-17 | Video: HEVC/DNx decode, video export, external timecode | Features / Formats | [file-format-parity.md](file-format-parity.md) | 30–50 |
 | G-18 | Speech-to-text transcription | AI | this file | 30–50 |
 | G-19 | UI feel: generic plugin windows, shortcut collisions, pro-grade meters and scaling | UI/UX | [ui-parity.md](ui-parity.md) | 60–100 |
@@ -161,10 +161,13 @@ varispeed, high-quality offline) plus Elastic Pitch and warp-marker editing dept
 ### G-16. Session management
 
 Broader session management still needs template/preset depth, workspace/sound browser previews,
-batch rename (new in 2026.4), disk-usage depth, automatic folder search or batch relink. User-selected missing-audio
-relink now checks metadata and a saved PCM identity, requires explicit legacy confirmation,
-and supports undo/redo and save/reopen ([media-relink.md](media-relink.md)). Video and interchange
-relink are outside this audio workflow. The broader G-16 estimate remains ≈ 25–40 h pending review.
+disk-usage depth, automatic folder search or batch relink. User-selected missing-audio relink now
+checks metadata and a saved PCM identity, requires explicit legacy confirmation, and supports
+undo/redo and save/reopen ([media-relink.md](media-relink.md)). Video and interchange relink remain.
+[Batch track naming](batch-track-rename.md) supports literal replacement, end trimming,
+prefix/suffix text and decimal numbering with preview, atomic collision checks and one Undo.
+Regex, range/middle transforms, alphabetic numbering, presets and clip/file batch naming remain.
+No readiness or remaining-hours remeasurement was performed. ≈ 25–40 h (existing estimate).
 
 ### G-17. Video and post
 
@@ -200,5 +203,6 @@ missing. Out of scope unless the owner decides otherwise.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-12 | minor | Narrowed G-16: manual audio relink added; automatic/batch searches and broader session management remain |
+| 2026-10-12 | minor | Narrowed G-16: bounded batch track naming added; advanced controls and clip/file workflows remain |
 | 2026-10-10 | minor | Marked the alpha blockers (G-01, G-02, G-03; parts of G-05 and G-06) from the core-workflow gate |
 | 2026-10-10 | major | Created from the full re-measure against Pro Tools Ultimate 2026.4.1: 22 ranked gaps with evidence and estimates |

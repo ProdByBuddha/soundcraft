@@ -31,6 +31,7 @@ mod setup_more;
 mod surround;
 mod track;
 mod track_more;
+mod track_rename;
 mod transport;
 mod video;
 mod view;
@@ -106,6 +107,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(edit_more::specs());
         v.extend(view::specs());
         v.extend(track::specs());
+        v.extend(track_rename::specs());
         v.extend(clip::specs());
         v.extend(event::specs());
         v.extend(mix::specs());
