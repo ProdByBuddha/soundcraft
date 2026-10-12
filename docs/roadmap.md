@@ -1,10 +1,22 @@
 # SoundCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (alpha gate added; stage re-normalized to pre-alpha) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Master post-fader reference acceptance added to combined workflows; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Forward-looking plan. Status and numbers: [`../ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the ranked work list: [`gaps.md`](gaps.md).
 Hours are Opus 5.5 agent-hours.
+
+G-16 progress (2026-10-12): user-selected missing-audio relinking now validates metadata/content,
+preserves clip timing and supports undo/redo and persisted sessions. Automatic searches, batch
+relinking and broader session management remain. See [media-relink.md](media-relink.md).
+[Save Copy audio completeness](session-copy.md) now has strict preflight and a read-only media preview. This narrows session-file correctness work; conversion, selected-time export, video and other external-asset portability remain open.
+Single-track stored-name acceptance now passes native command-based rename, occupied-name
+rejection and Save/Open with comments retained by track ID. Dialog/widget behavior and
+folder/output-bus label synchronization remain separate; see [fork integration](fork-integration.md).
+
+G-04 progress (2026-10-12): [Safe audio Heal](heal-safety.md) restores ordinary unprocessed
+audio splits, refuses unsupported clip processing and preserves no-op document/history state.
+Advanced Heal, removed silence and MIDI/video remain; stage and estimates are unchanged.
 
 ## Current focus
 
@@ -15,6 +27,12 @@ Hours are Opus 5.5 agent-hours.
 4. **macOS plugin hosting** (G-05): library-validation entitlement now (#153), then AU editors. ≈ 15–25 h.
 5. **A PR CI that runs `cargo xtask ci`** on Linux, macOS and Windows (G-14). ≈ 5–10 h.
 
+**2026-10-12 progress:** Batch track naming now supports literal replace or clear, trim at
+either end, prefix/suffix and decimal numbering with a name preview, atomic collision
+validation and one Undo step. See [`batch-track-rename.md`](batch-track-rename.md). Advanced
+rename controls, presets and batch clip/file naming remain in G-16. This bounded workflow
+does not change the readiness stage or the existing estimates.
+
 ## Alpha gate
 
 The core workflows a Pro Tools professional does every day, checked end to end on macOS (the
@@ -23,7 +41,7 @@ main platform). Any **no** keeps SoundCraft **pre-alpha**, and those rows are th
 
 | Workflow | Works end to end? | Evidence | Hours to pass |
 |---|---|---|---:|
-| Record audio from a chosen interface at a chosen buffer size, monitor, punch, keep the takes | **no** | Default output and input devices only. Fixed 512-sample block. Separate input and output streams. `setup.playback_engine` params ignored by playback. Takes held in RAM until stop (PR #84). No input device choice (#42). | 35–55 |
+| Record audio from a chosen interface at a chosen buffer size, monitor, punch, keep the takes | **no** | Default output and input devices only. Fixed 512-sample block. Separate input and output streams. `setup.playback_engine` params ignored by playback. Native disk writer/allocation exists; physical-volume recording acceptance remains. No input device choice (#42). | 35–55 |
 | Record MIDI from a controller and play it back through an instrument | **no** | Playback of drawn and imported MIDI works. No MIDI device layer at all, so nothing can be recorded and instruments can't be played live (G-02). | 20–35 |
 | Edit: select, trim, fade, comp playlists, Slip/Shuffle/Grid | yes (rough) | Every Edit menu command; property-tested with undo; open bugs #3, #5, #140 don't block the workflow | — |
 | Mix with built-in and third-party plugins, sends, busses, automation | partial (passes on CLAP/AU) | 26 built-in processors; CLAP and AU host on the signed macOS build, but its missing entitlement blocks third-party VST3 (#153). No AU plugin windows yet; VST3 windows on macOS only | 1–2 (entitlement) |
@@ -41,7 +59,7 @@ Status: ✅ done · 🟡 in progress · ⬜ not started.
 |---|---|---|---:|
 | M0–M4 | Workspace, gates, model, I/O, DSP, mix engine, command engine, Edit/Mix UI, playback, metering, plugins, bounce | ✅ | — |
 | M5 | Editing depth (tools, modes, playlists, fades, comping, clip groups) | ✅ (bugs open, G-04) | in G-04 |
-| M6 | Recording, punch, loop record, monitoring | 🟡 first cut; device choice and record-to-disk missing | 40–60 |
+| M6 | Recording, punch, loop record, monitoring | 🟡 first cut; device choice and physical disk-recording acceptance remain | 40–60 |
 | M7 | MIDI and notation editing | 🟡 | 50–80 |
 | M8 | CLI, control channel, MCP, agent acceptance test | ✅ | 3 |
 | M9 | AudioSuite breadth ✅, Elastic Audio 🟡, Beat Detective 🟡 | 🟡 | 40–60 |
@@ -53,6 +71,8 @@ Status: ✅ done · 🟡 in progress · ⬜ not started.
 | M15 | **Localization**: catalog, fonts/RTL, the 8 Pro Tools languages first | ⬜ (PRs #141, #143 open) | 70–110 |
 | M16 | Built-in plugin depth, sidechain, ARA | ⬜ | 110–170 |
 | M17 | Immersive delivery (ADM BWF, object renderer, binaural) and video depth | ⬜ | 80–130 |
+
+**M0–M4 follow-up, SC-MX37: partial.** [Track Bounce file delivery](track-bounce-files.md) is separate from Commit and preserves the open document. Selected Audio/built-in Instrument files, preview/revision gating, volume/pan policy and explicit range/tails have focused native and UI evidence. Hosted processing, Aux/Master, real-time paths, Windows native publication and the remaining documented manual options are still open. This bounded follow-up does not change the alpha gate, milestone estimates or readiness numbers.
 
 ## To beta (~350–570 h, about 60–70 % parallelizable)
 
@@ -72,6 +92,10 @@ Beta needs ~75 % ready for real work and no blocking gap in session interchange.
 Needs a human: hardware for G-01/G-02/G-10/G-11, native-speaker review, and owner decisions on
 AAX, `.ptx` and Avid cloud features.
 
+**SC-MX11 follow-up: partial.** [Bounded send automation playback](send-automation.md) adds per-sample mono-to-stereo Bus pan and exact ordinary-Bus mute steps with synthetic reference and persistence evidence. The original all-AutoParam acceptance, other widths/routes, suspension/writing and actual platform/runtime checks remain. Alpha gate, milestone estimates and readiness numbers are unchanged.
+
+**SC-MX02 native reference acceptance.** [Master Fader post-fader inserts](master-post-fader.md) pass eight Mix and three Engine independent nonlinear PCM and command/persistence tests. Ordinary inserts retain pre-fader order. Master block ramps retain their declared endpoint model; complete SC-MX11 automation, hosted/hardware processing, Master routing/PDC and dither acceptance remain. Milestone completion, stage and estimates are unchanged.
+
 ## After beta (to full parity, a further ~600–900 h)
 
 Control surfaces (G-10), immersive delivery (G-12), the rest of the built-in plugin catalogue
@@ -82,9 +106,23 @@ remaining languages.
 There is no `cargo xtask scorecard` in this repo; the measured number is `cargo xtask parity`
 ([`parity-checklist.md`](parity-checklist.md)).
 
+Integrated workflow details and remaining validation: [fork integration](fork-integration.md). Existing percentages and hours remain prior estimates.
+
+ED-56 arrangement correctness progress: [selection repeat](selection-repeat.md) covers bounded master-view duplication, repeated automation and Shuffle ripple. Musical remapping and advanced fragments remain; milestone completion and estimates are unchanged.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Verified SC-MX02 Master post-fader nonlinear reference and persistence scope; milestone completion and estimates unchanged |
+| 2026-10-12 | minor | Recorded native stored-name/conflict/comment Save/Open acceptance; broader label synchronization and estimates unchanged |
+| 2026-10-12 | minor | Recorded bounded SC-MX11 send pan/mute playback and full automation residuals; estimates unchanged |
+| 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
+| 2026-10-12 | minor | Recorded bounded safe audio Heal and its residual processing/workflow scope; estimates unchanged |
+| 2026-10-12 | minor | Recorded eight combined workflows and their residual checks without changing stage or estimates |
+| 2026-10-12 | minor | Recorded bounded manual audio relink progress without changing stage/readiness estimates |
+| 2026-10-12 | minor | Added bounded batch track naming progress; retained stage and estimates |
+| 2026-10-12 | minor | Added the partial SC-MX37 follow-up to the bounce milestone; alpha gate and estimates unchanged |
+| 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | minor | Added the alpha gate (3 of 6 core workflows fail → pre-alpha) |
 | 2026-10-10 | major | Created from ROADMAP.md's milestones and alpha list; added M12–M17 and the beta plan with estimates |

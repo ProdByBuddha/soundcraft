@@ -2,6 +2,7 @@
 //! mapping VST3 sub-categories to SoundCraft categories.
 
 use soundcraft_dsp::Category;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Directory recursion limit while scanning (vendors nest folders, never deeply).
@@ -33,19 +34,32 @@ impl Os {
     }
 }
 
-/// The standard VST3 search locations for this OS (existing or not), followed by every entry of
-/// the `VST3_PATH` environment variable.
+/// Automatic VST3 search locations. `SOUNDCRAFT_VST3_SEARCH_PATHS`, when present,
+/// exclusively supplies these roots (an empty value disables automatic discovery). Otherwise
+/// the standard OS locations are followed by the legacy additive `VST3_PATH` entries.
+/// Explicit `scan_paths` and `add_search_dir` calls remain available.
 pub fn default_search_paths() -> Vec<PathBuf> {
-    let mut v = os_search_paths(
-        Os::current(),
-        std::env::var_os("HOME").map(PathBuf::from),
-        std::env::var_os("COMMONPROGRAMFILES").map(PathBuf::from),
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
-    );
-    if let Some(cp) = std::env::var_os("VST3_PATH") {
-        v.extend(std::env::split_paths(&cp).filter(|p| !p.as_os_str().is_empty()));
+    configured_search_paths(
+        os_search_paths(
+            Os::current(),
+            std::env::var_os("HOME").map(PathBuf::from),
+            std::env::var_os("COMMONPROGRAMFILES").map(PathBuf::from),
+            std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+        ),
+        std::env::var_os("VST3_PATH").as_deref(),
+        std::env::var_os("SOUNDCRAFT_VST3_SEARCH_PATHS").as_deref(),
+    )
+}
+
+fn configured_search_paths(mut standard: Vec<PathBuf>, additional: Option<&OsStr>, exclusive: Option<&OsStr>) -> Vec<PathBuf> {
+    let paths = |value: &OsStr| std::env::split_paths(value).filter(|p| !p.as_os_str().is_empty()).collect::<Vec<_>>();
+    if let Some(value) = exclusive {
+        return paths(value);
     }
-    v
+    if let Some(value) = additional {
+        standard.extend(paths(value));
+    }
+    standard
 }
 
 /// The OS-specific standard locations, given the relevant environment values.
@@ -292,6 +306,30 @@ mod tests {
     }
 
     #[test]
+    fn absent_exclusive_paths_keep_standard_and_legacy_roots() {
+        let standard = vec![PathBuf::from("standard-one"), PathBuf::from("standard-two")];
+        let legacy = std::env::join_paths(["legacy-one", "legacy two"]).unwrap();
+        assert_eq!(
+            configured_search_paths(standard, Some(&legacy), None),
+            vec![PathBuf::from("standard-one"), PathBuf::from("standard-two"), PathBuf::from("legacy-one"), PathBuf::from("legacy two")]
+        );
+    }
+
+    #[test]
+    fn empty_exclusive_paths_disable_all_automatic_roots() {
+        assert!(configured_search_paths(vec![PathBuf::from("standard")], Some(OsStr::new("legacy")), Some(OsStr::new(""))).is_empty());
+    }
+
+    #[test]
+    fn exclusive_paths_replace_standard_and_legacy_roots() {
+        let exclusive = std::env::join_paths(["owned-fixture-one", "owned fixture two"]).unwrap();
+        assert_eq!(
+            configured_search_paths(vec![PathBuf::from("standard")], Some(OsStr::new("legacy")), Some(&exclusive)),
+            vec![PathBuf::from("owned-fixture-one"), PathBuf::from("owned fixture two")]
+        );
+    }
+
+    #[test]
     fn os_paths_cover_the_standard_locations() {
         let mac = os_search_paths(Os::MacOs, Some("/Users/u".into()), None, None);
         assert_eq!(mac, vec![PathBuf::from("/Users/u/Library/Audio/Plug-Ins/VST3"), PathBuf::from("/Library/Audio/Plug-Ins/VST3")]);
@@ -300,7 +338,6 @@ mod tests {
         assert_eq!(win.len(), 2);
         let unix = os_search_paths(Os::Unix, Some("/home/u".into()), None, None);
         assert_eq!(unix, vec![PathBuf::from("/home/u/.vst3"), PathBuf::from("/usr/lib/vst3"), PathBuf::from("/usr/local/lib/vst3")]);
-        assert!(!default_search_paths().is_empty());
     }
 
     #[test]

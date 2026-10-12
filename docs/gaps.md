@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (alpha blockers marked after the core-workflow gate) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Master post-fader reference acceptance added to combined workflows; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -20,7 +20,7 @@ When you close a gap, delete its entry (or shrink it) in the same PR, and bump t
 | G-03 | **Alpha blocker.** Cannot exchange sessions with Pro Tools (no AAF/OMF, no `.ptx`) | File formats | [file-format-parity.md](file-format-parity.md) | 50–90 |
 | G-04 | Open correctness bugs in features counted as done (~25 issues) | Stability | this file | 25–40 |
 | G-05 | (Entitlement part: alpha blocker for the mix row) Third-party VST3s blocked in the signed macOS build; AU editors missing | Ecosystem | [plugin-parity.md](plugin-parity.md) | 15–25 |
-| G-06 | (Record-to-disk part: alpha blocker for the tracking row) Sources decoded whole into RAM; recording into RAM | Performance | [hardware-parity.md](hardware-parity.md) | 15–25 |
+| G-06 | Sources decoded whole into RAM; native disk recording/allocation needs physical-volume acceptance | Performance | [hardware-parity.md](hardware-parity.md) | 15–25 |
 | G-07 | Nothing is compared against Pro Tools' output (no fidelity harness) | Features | this file | 20–30 |
 | G-08 | Built-in plugin catalogue thin and unverified | Features | [plugin-parity.md](plugin-parity.md) | 80–120 |
 | G-09 | English only, no string catalog, no CJK/RTL rendering | Localization | [localization-parity.md](localization-parity.md) | 70–110 |
@@ -30,7 +30,7 @@ When you close a gap, delete its entry (or shrink it) in the same PR, and bump t
 | G-13 | Sidechain inputs, ARA, out-of-process plugin sandboxing | Ecosystem | [plugin-parity.md](plugin-parity.md) | 30–50 |
 | G-14 | Windows/Linux/Web exercised only lightly at runtime; no PR CI running the tests | Platforms / Stability | this file | 20–40 |
 | G-15 | Elastic Audio depth: one algorithm, no Elastic Pitch | Features | [target-app-parity.md](target-app-parity.md) | 30–45 |
-| G-16 | Session templates, track presets, workspace browser, batch rename | Features | [target-app-parity.md](target-app-parity.md) | 25–40 |
+| G-16 | Session templates, track presets, workspace browser, advanced batch rename | Features | [target-app-parity.md](target-app-parity.md) | 25–40 |
 | G-17 | Video: HEVC/DNx decode, video export, external timecode | Features / Formats | [file-format-parity.md](file-format-parity.md) | 30–50 |
 | G-18 | Speech-to-text transcription | AI | this file | 30–50 |
 | G-19 | UI feel: generic plugin windows, shortcut collisions, pro-grade meters and scaling | UI/UX | [ui-parity.md](ui-parity.md) | 60–100 |
@@ -77,15 +77,26 @@ When you close a gap, delete its entry (or shrink it) in the same PR, and bump t
 
 ### G-04. Correctness bugs in "done" features
 
+- **Session copy:** [strict audio preflight and manifest](session-copy.md) cover all declared decoded sources while preserving missing-media ordinary saves/recovery. Conversion, selected-time export, original-file bytes/BWF metadata, video, external plugin-file inventory and whole-copy rollback remain open (manual-analysis ED-03 stays partial).
+
 Open on 2026-10-10 (several have PRs open):
 editing #3, #5, #140, #144; clip/session #86 (PR #123), #88 (PR #130), #91 (PR #124), #92 (PR #132);
 automation #104 (PR #134); mix/bounce #59 (PR #131), #103 (PR #133), #152; playback #101 (PR #129);
 MIDI #87, #98 (PR #125); import #89 (PR #128); CLI #95, #96 (PR #126, #127); MCP #145 (PR #146);
 web #63, #64, #136; Clip List #4 (PR #75); plugin view #6; shortcuts #7, #41;
 launch #142; Linux #45, #107.
+- **2026-10-12 progress:** [Safe audio Heal](heal-safety.md) now checks adjacent same-source
+  continuity, preserves ordinary unprocessed audio and remaps removed clip selections. Refused
+  processing/metadata returns skipped reasons without changing the document or Undo/Redo.
+  Fades/envelopes/effects/stretch, MIDI/video, removed-silence restoration and the existing
+  shortcut issue #140 remain open. This narrows ED-48 without claiming general Heal parity.
 - **Impact:** each one is small, but together they say "presence is not parity": an outside
   contributor found seven in one sitting (#116–#122).
 - **Estimate:** ≈ 25–40 h at 0.5–1.5 h each, plus review of the open PRs.
+
+**SC-MX11 — send automation playback: partial.** [Sample-exact send consumers](send-automation.md) cover mono-to-stereo Bus pan and stepped mute on ordinary Bus routes up to 16 channels, using independent synthetic PCM and static references across chunks, seek/loop boundaries and command/save history. This narrows the send consumer gap in G-04; the full seven-family AutoParam reference matrix, other send-pan layouts/routes, global enable/suspend migration, writing/safing and platform/runtime acceptance remain open. Existing mixer estimates are unchanged.
+
+**ED-56 remains partial.** [Bounded selection repeat](selection-repeat.md) addresses arrangement automation, copied silence, Shuffle and metadata identity. Fractional/variable-tempo material mapping, automation-only views, note-only MIDI and processed fragments remain; this does not close G-04 or change its estimate.
 
 ### G-05. Plugin hosting on macOS
 
@@ -97,10 +108,12 @@ launch #142; Linux #45, #107.
 
 ### G-06. Memory-bound media
 
-- **Missing:** streaming sources from disk; recording to disk. Every source is decoded whole into
-  the `SourcePool`; takes accumulate in RAM until stop (PR #84 open).
-- **Impact:** hour-long multitrack sessions and long takes exhaust memory; a crash during a long
-  take loses it.
+- **Missing:** streaming long sources from disk. Every source is decoded whole into the
+  `SourcePool`. Native takes use a writer thread; session/per-track allocation now reaches take
+  planning and unsaved takes use isolated recovery directories. Physical multi-volume/full-volume
+  and sustained long-take acceptance remain ([recording allocation](recording-disk-allocation.md)).
+- **Impact:** hour-long multitrack source sessions can exhaust memory; large-session throughput
+  and disk-failure behavior still need runtime measurement.
 - **Estimate:** ≈ 15–25 h.
 
 ### G-07. Fidelity harness against Pro Tools
@@ -160,8 +173,17 @@ varispeed, high-quality offline) plus Elastic Pitch and warp-marker editing dept
 
 ### G-16. Session management
 
-No session templates, track presets, workspace/sound browser with previews, batch rename (new in
-2026.4), disk-usage and relink depth. ≈ 25–40 h.
+Broader session management still needs template/preset depth, workspace/sound browser previews,
+disk-usage depth, automatic folder search or batch relink. User-selected missing-audio relink now
+checks metadata and a saved PCM identity, requires explicit legacy confirmation, and supports
+undo/redo and save/reopen ([media-relink.md](media-relink.md)). Video and interchange relink remain.
+[Batch track naming](batch-track-rename.md) supports literal replacement, end trimming,
+prefix/suffix text and decimal numbering with preview, atomic collision checks and one Undo.
+Regex, range/middle transforms, alphabetic numbering, presets and clip/file batch naming remain.
+Single-track rename/conflict/comment ownership now passes actual native Save/Open with two
+distinct tracks and multiline Unicode comments. UI dialog acceptance and folder/output-bus
+label synchronization remain separate ([fork integration](fork-integration.md)).
+No readiness or remaining-hours remeasurement was performed. ≈ 25–40 h (existing estimate).
 
 ### G-17. Video and post
 
@@ -192,9 +214,28 @@ Bounce writes WAV/BWF/RF64, AIFF and FLAC; Pro Tools also writes MP3 and AAC/M4A
 Collaboration, cloud projects, Sketch, Splice, Learn, sign-in: 11 of the 30 menu leaves still
 missing. Out of scope unless the owner decides otherwise.
 
+Integrated workflow details and remaining validation: [fork integration](fork-integration.md). Existing percentages and hours remain prior estimates.
+## Scoped manual follow-ups
+
+**SC-MX02 — Master Fader insert order: native reference acceptance.** [Master post-fader processing](master-post-fader.md) applies gain before serial inserts and preserves ordinary pre-fader inserts. Eight Mix and three Engine tests pass with independent nonlinear limiter PCM, an audible wrong-order contrast, callback endpoint/seek/loop schedules, bypass/cascade/meters, command history and native/strict Copy reopen. Hosted/hardware inserts, Master route assignment and latency/PDC, other main widths, dither fidelity and complete seven-family SC-MX11 automation remain open. This narrows signal-order fidelity evidence without closing G-07 or changing ranked estimates.
+
+**SC-MX37 — Track Bounce: partial.** [Separate file delivery](track-bounce-files.md) replaces the Commit alias for selected Audio and built-in Instrument tracks. Focused tests cover explicit destinations, exact widths, volume/pan policy, range/tail boundaries, native collision/cleanup behavior and document/undo/journal immutability. Native delivery was decoded; the dialog was exercised with menu, header, shortcut, stale-preview and same-frame cancellation checks. The native implementation requires Unix and hard-link-capable destinations; web supports one file through the existing download hook, verified at compilation only.
+
+Remaining: Aux/Master and hosted processing, latency-producing effects, real-time/hardware paths, multipath delivery, Windows native publication, dual/multi-mono grouping, sample-rate conversion, naming/preset/import-after-bounce workflows, progress/cancellation and Audio effect prehistory. Clip-effect tails do not independently continue beyond capture end. Integrated Float32 WAV/AIFF Track Bounce retains finite headroom; nonfinite render output fails without delivery. This follow-up does not close the broader ranked gaps or change their estimates.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Verified SC-MX02 nonlinear Master post-fader reference acceptance; broader fidelity/runtime gaps and estimates remain |
+| 2026-10-12 | minor | Verified native stored-name/conflict/comment persistence; broader G-16 and label-sync scope remain |
+| 2026-10-12 | minor | Recorded bounded SC-MX11 send pan/mute playback and full automation residuals; estimates unchanged |
+| 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
+| 2026-10-12 | minor | Narrowed G-04 with safe unprocessed audio Heal; advanced Heal and shortcut residuals remain |
+| 2026-10-12 | minor | Narrowed native recording allocation and session management gaps; physical-volume, source-streaming and advanced workflow checks remain |
+| 2026-10-12 | minor | Narrowed G-16: manual audio relink added; automatic/batch searches and broader session management remain |
+| 2026-10-12 | minor | Narrowed G-16: bounded batch track naming added; advanced controls and clip/file workflows remain |
+| 2026-10-12 | minor | Recorded partial SC-MX37 Track Bounce support and explicit residuals; ranked gap estimates unchanged |
+| 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | minor | Marked the alpha blockers (G-01, G-02, G-03; parts of G-05 and G-06) from the core-workflow gate |
 | 2026-10-10 | major | Created from the full re-measure against Pro Tools Ultimate 2026.4.1: 22 ranked gaps with evidence and estimates |

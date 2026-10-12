@@ -1,6 +1,6 @@
 # Target-app parity: SoundCraft vs Avid Pro Tools
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (hours to ~95 % for each audience; full number confirmed as an additive weighted sum) · **Target:** Avid Pro Tools Ultimate 2026.4.1 (bundle 26.4.1.179, macOS)
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Master post-fader reference acceptance added to combined workflows; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1 (bundle 26.4.1.179, macOS)
 
 The authoritative assessment of how close SoundCraft is to Pro Tools. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it, [`gaps.md`](gaps.md) itemizes every shortfall, and the per-dimension docs go deeper:
@@ -84,7 +84,7 @@ post-production, tracking) can switch. "Ready" is depth, correctness and fidelit
 | File formats | 10 % | **~40 %** | estimated | 70–120 | [file-format-parity.md](file-format-parity.md) | WAV/BWF/RF64/AIFF/FLAC read+write, compressed formats read; no `.ptx`, AAF, OMF, ADM BWF, MP3/AAC export, video export |
 | Hardware | 10 % | **~12 %** | estimated | 110–180 | [hardware-parity.md](hardware-parity.md) | Default output and default input device only, fixed 512-sample block, no ASIO, no MIDI devices, no control surfaces, no sync |
 | Stability | 10 % | **~45 %** | estimated | 50–80 | [gaps.md](gaps.md) | Never-crash rules and proptests (random edits, mutated sessions, hostile params); but ~25 open correctness bugs, a launch failure (#142), X11 llvmpipe failure (#107) |
-| Performance | 5 % | **~35 %** | estimated (unmeasured) | 40–70 | [hardware-parity.md](hardware-parity.md) | Parallel strip rendering and PDC exist; whole files decoded into RAM, recording into RAM (#84 open), no track-count or latency benchmarks |
+| Performance | 5 % | **~35 %** | estimated (unmeasured) | 40–70 | [hardware-parity.md](hardware-parity.md) | Parallel strip rendering and PDC exist; whole files decoded into RAM, native disk recording/allocation unverified on physical volumes, no track-count or latency benchmarks |
 | Ecosystem / plugins | 4 % | **~30 %** | estimated | in Features + Hardware | [plugin-parity.md](plugin-parity.md) | CLAP/VST3/AU hosting; no AAX (Pro Tools' only format), no ARA, no sidechain, no control-surface ecosystem, no content library |
 | Platforms | 3 % | **~65 %** | estimated | 20–40 | [ROADMAP.md](../ROADMAP.md) | Builds for macOS, Windows x64/x86/arm64, Linux, FreeBSD, Web (Pro Tools: macOS, Windows), but only macOS is exercised at runtime; Web lacks file pickers (#63, #64) |
 | Localization | 2 % | **~12 %** | measured (catalog count) | 70–110 | [localization-parity.md](localization-parity.md) | English only, no string catalog; Pro Tools ships 8 UI languages; FR/ES PR #143 open |
@@ -177,10 +177,10 @@ Weights by what Pro Tools users actually spend time on. **Breadth** = the featur
 
 | Area | Weight | Breadth | Ready | Remaining (h) | What's there / what's missing |
 |---|---:|---:|---:|---:|---|
-| Recording and monitoring | 12 % | 75 % | **40 %** | 40–60 | Punch in/out, QuickPunch-style punch on the fly, pre/post-roll, loop record into playlists, input monitoring through the strip, autosave/recovery. Missing: input/output device choice, buffer size, duplex low-latency path, record straight to disk (#84 open), per-channel hardware input routing, TrackPunch/destructive punch beyond flags, monitoring opt-out (#42) |
-| Editing | 15 % | 92 % | **65 %** | 40–60 | Slip/Shuffle/Spot/Grid, every Edit menu command, fades/crossfades, playlists and comping, clip groups, nudge, Tab to transient, separate/heal/consolidate/strip silence. Open bugs: #3, #5 (Multitool handles), #140 (Heal shortcut), #86, #91, #92; no batch fade presets, no field-recorder workflows |
+| Recording and monitoring | 12 % | 75 % | **40 %** | 40–60 | Punch in/out, QuickPunch-style punch on the fly, pre/post-roll, loop record into playlists, input monitoring through the strip, autosave/recovery. Missing: input/output device choice, buffer size, duplex low-latency path, physical-volume disk-recording acceptance, per-channel hardware input routing, TrackPunch/destructive punch beyond flags, monitoring opt-out (#42) |
+| Editing | 15 % | 92 % | **65 %** | 40–60 | Slip/Shuffle/Spot/Grid, every Edit menu command, [bounded selection repeat](selection-repeat.md) with musical/fragment residuals, fades/crossfades, playlists and comping, clip groups, nudge, Tab to transient, separate/heal/consolidate/strip silence. [Heal safety](heal-safety.md) covers unprocessed contiguous audio; advanced processing and silence restoration remain. Open bugs: #3, #5 (Multitool handles), #140 (Heal shortcut), #86, #91, #92; no batch fade presets, no field-recorder workflows |
 | Mixing and routing | 12 % | 85 % | **60 %** | 35–50 | Faders, pan, sends, busses, aux, masters, VCAs, folders, 10 inserts, PDC, solo modes, I/O Setup. Missing: sidechain inputs, hardware-channel I/O mapping, bus/AFL/PFL paths verified, HEAT; bugs #59, #103 |
-| Automation | 7 % | 80 % | **55 %** | 20–30 | Lanes for volume/pan/mute/sends/plugin params, trim, Write/Touch/Latch, glide/thin/coalesce. Missing: surround-pan and object automation, Touch/Latch prime and preview modes, automation on control surfaces; bug #104 |
+| Automation | 7 % | 80 % | **55 %** | 20–30 | Lanes for volume/pan/mute/sends/plugin params, trim, Write/Touch/Latch, glide/thin/coalesce. [Send playback](send-automation.md) covers per-sample mono-to-stereo Bus pan and exact ordinary-Bus mute; the complete AutoParam reference matrix remains open. Missing: surround-pan and object automation, Touch/Latch prime and preview modes, automation on control surfaces; bug #104 |
 | Built-in plugins and AudioSuite | 8 % | 40 % | **35 %** | 80–120 | 26 processors + 2 instruments covering every AudioSuite category; Pro Tools bundles roughly three times as many plugins plus virtual instruments. No fidelity comparison, generic parameter UIs (#139). See [plugin-parity.md](plugin-parity.md) |
 | Third-party plugin hosting | 8 % | 70 % | **45 %** | 40–60 | CLAP, VST3, AU: audio, params, latency, notes, state, presets, off-thread lifecycle, CLAP floating GUIs, VST3 editors on macOS. Missing: AU editors, VST3 editors on Windows/Linux, sidechain buses, ARA, out-of-process sandboxing, macOS library-validation entitlement (#153, #149). AAX cannot be hosted (Avid SDK licence, PACE signing) |
 | MIDI and instruments | 8 % | 70 % | **30 %** | 50–80 | Piano roll, event list, step input, quantize/transpose, real-time properties, SMF import/export. Missing: **any MIDI device input/output** (no keyboard recording, no external synths, no MIDI clock/MTC out), MIDI learn, instrument depth (Sampler PR #108 open), bug #98 |
@@ -188,10 +188,12 @@ Weights by what Pro Tools users actually spend time on. **Breadth** = the featur
 | Elastic Audio, TCE, Beat Detective, pitch | 5 % | 70 % | **35 %** | 40–60 | Pitch-preserving warp on Elastic tracks, TCE, conform to tempo, Beat Detective and Identify Beat, audio-to-MIDI. Missing: per-algorithm choice (polyphonic/rhythmic/monophonic/varispeed/X-Form), warp markers UI depth, Elastic Pitch, quality vs Pro Tools unmeasured |
 | Surround and immersive | 5 % | 55 % | **35 %** | 50–80 | Formats stereo → 9.1.6 and Ambisonics, surround panner, fold-down, multichannel bounce, object/bed routing. Missing: Dolby Atmos renderer integration and ADM BWF, MPEG-H (new in 2026.4), binaural/headphone monitoring, surround automation; bug #89 |
 | Video and post | 5 % | 60 % | **40 %** | 40–60 | Video track, H.264/ProRes/MJPEG decoders, sync offset, relinking, timecode rulers. Missing: HEVC/DNx/AV1, video bounce/export, timecode sync to external machines, speech-to-text transcript, field-recorder/iXML conform |
-| Session, file management, interchange | 10 % | 55 % | **35 %** | 60–100 | `.scraft` + Audio Files, Save Copy In, Import Session Data, clip groups, session text export, audio-health report. Missing: `.ptx` read/write, AAF/OMF (#40), session templates, track presets, workspace/Soundbase browser, disk streaming of long sources, batch rename; bugs #86, #91, #136 |
+| Session, file management, interchange | 10 % | 55 % | **35 %** | 60–100 | `.scraft` + Audio Files, Save Copy In, Import Session Data, clip groups, session text export, audio-health report. Missing: `.ptx` read/write, AAF/OMF (#40), session templates, track presets, workspace/Soundbase browser, disk streaming of long sources, advanced batch naming; bugs #86, #91, #136 |
 | Collaboration, cloud, Sketch, Splice | 2 % | 0 % | **0 %** | not estimated | Avid services; out of scope unless the owner decides otherwise |
 | Agent control (CLI, control channel, MCP) | 1 % | 100 % | **100 %** | 3 | Ahead of Pro Tools' scripting SDK; one open bug (#145) |
 | **Weighted** | 100 % | **~70 %** | **~45 %** | **~520–810** | |
+
+**SC-MX37 — Track Bounce: partial.** [Dedicated selected-track file delivery](track-bounce-files.md) has original SoundCraft engine/native/UI tests and a decoded native artifact. It preserves document state and separates export from Commit. The verified subset is Audio/built-in Instrument rendering to Unix hard-link-capable destinations; the single-file web path compiles but has no browser delivery observation. Hosted processing, Aux/Master, latency-producing effects, real-time/hardware and multipath delivery, Windows native publication and other manual options remain unsupported. This is source and synthetic SoundCraft evidence, not a Pro Tools output comparison. All table weights, assessment values, hour estimates and stage remain unchanged.
 
 ## Stage
 
@@ -201,7 +203,7 @@ platform:
 
 - Tracking from a chosen interface at a chosen buffer size: **no**. Only the default devices are
   used, the mix runs in fixed 512-sample blocks, input and output are separate streams, and
-  takes are held in RAM.
+  physical-volume recording acceptance remains unverified.
 - MIDI recording: **no**. There is no MIDI device layer.
 - Session interchange with Pro Tools or picture editors: **no**. No AAF/OMF/`.ptx`.
 
@@ -241,10 +243,20 @@ serializes more, because it needs hands-on testing.
 - Native-speaker review for every language beyond English.
 - Ears: a mix engineer's A/B of plugins, fades and elastic audio.
 
+Integrated workflow details and remaining validation: [fork integration](fork-integration.md). Existing percentages and hours remain prior estimates.
+
+SC-MX02 [Master post-fader insert order](master-post-fader.md) has native acceptance evidence from eight Mix and three Engine tests with independent nonlinear PCM, an audible wrong-order contrast and command/native persistence. Broader Master routing/PDC, hosted/hardware processing, dither fidelity and complete SC-MX11 automation remain separate. No readiness or hours value was remeasured.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Recorded SC-MX02 Master post-fader independent nonlinear reference acceptance without readiness remeasurement |
+| 2026-10-12 | minor | Recorded bounded SC-MX11 send pan/mute playback and full automation residuals; estimates unchanged |
+| 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
+| 2026-10-12 | minor | Recorded safe unprocessed audio Heal and explicit advanced residuals without readiness remeasurement |
+| 2026-10-12 | minor | Recorded integrated workflow scope and corrected obsolete RAM-take statements; no readiness remeasurement |
+| 2026-10-12 | minor | Recorded partial SC-MX37 Track Bounce evidence and limits without re-measuring any assessment value |
 | 2026-10-10 | minor | Readiness-by-audience table: hours to ~95 % for full (950–1,450 h), mainstream (380–600 h) and essentials (110–200 h). The full number is already the additive weighted sum over the written dimension table (40.6 %); method unchanged |
 | 2026-10-10 | minor | Added the mainstream-practitioner (~36 %) and essentials-user (~57 %) numbers with written weights, discounts and user evidence. Checked the full ~40 %: it is the written dimension weights × values (40.6 %), so it doesn't move |
 | 2026-10-10 | minor | Stage alpha → pre-alpha under the core-workflow gate; alpha distance ~110–180 h |

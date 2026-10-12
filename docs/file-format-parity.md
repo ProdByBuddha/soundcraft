@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first format inventory against Pro Tools 2026.4.1) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Float32 preservation and independent bounce delivery rate) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every format Pro Tools reads or writes, and ours. The Pro Tools list comes from the document types
 its bundle declares (`CFBundleDocumentTypes` in Info.plist: names only, nothing else read) and its
@@ -23,7 +23,8 @@ Legend: ✅ supported and tested · 🟡 partial · ❌ missing · — not appli
 | OMF | import/export | ❌ | ❌ | Legacy, still delivered by some editors |
 | Media Composer–compatible session | export | ❌ | ❌ | AAF variant |
 | ADM BWF (Dolby Atmos master) | import/export | ❌ | ❌ | G-12 |
-| SoundCraft session `.scraft` + `Audio Files/` | — | ✅ | ✅ | JSON (serde); mutated-file property test loads or fails cleanly; plugin state embedded |
+| SoundCraft session `.scraft` + `Audio Files/` | — | ✅ | ✅ | JSON (serde); mutated-file property test loads or fails cleanly; plugin state embedded; [Save Copy](session-copy.md) requires complete decoded audio; external video/plugin files and conversion remain open |
+| Missing audio relink in `.scraft` / bundles | documented workflow | 🟡 | 🟡 | Native user-selected audio, optional versioned PCM identity and metadata validation; legacy confirmation; no automatic search or video relink ([details](media-relink.md)) |
 | Import Session Data (from another session) | Pro Tools sessions | 🟡 | — | From `.scraft` only |
 | Session info as text | export | — | ✅ | `file.export_session_text` |
 | Clip groups `.rgrp` / ours `.scgrp` | read/write | 🟡 | 🟡 | Our own `.scgrp` format; Pro Tools' clip-group files not read |
@@ -33,10 +34,10 @@ Legend: ✅ supported and tested · 🟡 partial · ❌ missing · — not appli
 
 | Format | Pro Tools | Read | Write | Tests / notes |
 |---|---|---|---|---|
-| WAV / BWF (PCM 16/24/32, float 32), `bext` | native | ✅ | ✅ | Native reader/writer, TPDF dither option; also 8-bit and float 64 read |
+| WAV / BWF (PCM 16/24/32, float 32), `bext` | native | ✅ | ✅ | Native reader/writer, finite Float32 headroom retained, TPDF dither option; also 8-bit and float 64 read |
 | RF64 / BW64 (> 4 GiB) | read/write | ✅ | ✅ | `encode_wav_rf64` |
 | WAV `WAVE_FORMAT_EXTENSIBLE` multichannel with channel mask | read/write | ✅ | ✅ | `encode_with_channel_mask`; default 5.1 import creates a stereo track (#89, PR #128) |
-| AIFF / AIFF-C | native | ✅ | ✅ (`fl32`) | Native |
+| AIFF / AIFF-C | native | ✅ | ✅ (`fl32`) | Finite Float32 headroom retained |
 | FLAC | import | ✅ | ✅ | Own encoder |
 | MP3 | import, bounce | ✅ (symphonia) | ❌ | G-21 |
 | AAC / M4A / MP4 audio | import, bounce | ✅ (symphonia) | ❌ | G-21 |
@@ -48,6 +49,13 @@ Legend: ✅ supported and tested · 🟡 partial · ❌ missing · — not appli
 | MXF audio (OP-Atom, OP1a) | import | ❌ | ❌ | Avid media; FilmCraft has an MXF reader to learn from |
 | iXML / polyphonic field-recorder metadata | read | ❌ | ❌ | G-17 |
 | Peak overviews | `.wfm` cache | ✅ (own, in memory) | — | `audio-io::peaks`; not cached on disk |
+
+Bounce Mix supports an independently selected 8,000–768,000 Hz delivery rate with checked
+allocation limits and output-rate measurements. Conversion quality choices, layout-aware
+loudness weighting and further dither controls remain ([details](bounce-sample-rate.md)).
+**SC-MX37 — Track Bounce delivery: partial.** [Selected Audio/built-in Instrument exports](track-bounce-files.md) use explicit destinations and existing session-rate WAV/AIFF/FLAC codecs without editing the document. WAV/AIFF support 16/24-bit integer and 32-bit float; FLAC supports 16/24-bit integer, up to eight channels and 655350 Hz. WAV layout masks, decoded frames and widths up to 16 channels are tested. A delivered mono/48 kHz PCM24 WAV was independently decoded. Native publication currently requires Unix and a hard-link-capable filesystem; single-file web delivery compiles but has no observed browser download. Windows native delivery, hosted/Aux/Master/real-time/multipath paths, sample-rate conversion, mono-file grouping and other manual options remain open. No format readiness or hour estimate changes.
+
+Integrated Track Bounce Float32 WAV/AIFF output preserves finite over-unity samples through a decoded round-trip. Nonfinite render output is rejected with no delivered file and original source/session state retained. Mix keeps its independent delivery-rate conversion; Track Bounce remains at session rate.
 
 ## MIDI and notation
 
@@ -76,8 +84,14 @@ Legend: ✅ supported and tested · 🟡 partial · ❌ missing · — not appli
 | VST3 / Audio Units / CLAP | — (AAX only) | ✅ hosted (ahead of Pro Tools) |
 | Plug-in settings `.tfx` | read/write | ❌ (our own JSON presets per plugin) |
 
+Integrated workflow details and remaining validation: [fork integration](fork-integration.md). Existing percentages and hours remain prior estimates.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Finite Float32 headroom and bounded independent Bounce Mix sample rate integrated with saved PCM identity |
+| 2026-10-12 | minor | Backward-compatible optional PCM identity; known changed media stays unavailable; manual audio relink persists across save/bundle reopening |
+| 2026-10-12 | minor | Recorded partial SC-MX37 selected-track format/delivery evidence and Float32/platform residuals; assessment values unchanged |
+| 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | major | Created: format inventory against Pro Tools 2026.4.1's declared document types and import/bounce options |

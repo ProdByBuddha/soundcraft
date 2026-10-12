@@ -235,7 +235,8 @@ about egui, so the interface could be swapped for another one.
 
 The code never panics on bad input: errors are values, and a malformed file or a bad agent call
 produces a message, never a crash. `cargo xtask ci` runs formatting, clippy, the tests, the asset
-and layering checks and the WebAssembly build.
+and layering checks and the WebAssembly build. Its complete workspace test run uses owned
+plugin fixtures and Apple system Audio Units, with [installed third-party discovery isolated](docs/plugin-test-isolation.md).
 
 ## Status and roadmap
 

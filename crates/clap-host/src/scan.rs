@@ -1,6 +1,7 @@
 //! Finding CLAP plugins on disk (safe, pure `std::fs`) and mapping CLAP features to categories.
 
 use soundcraft_dsp::Category;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Directory recursion limit while scanning (CLAP folders may be nested, never deeply).
@@ -10,18 +11,31 @@ const MAX_BUNDLES: usize = 4096;
 /// Upper bound on directory entries visited by one scan.
 const MAX_ENTRIES: usize = 100_000;
 
-/// The standard CLAP search locations for this OS (existing or not), followed by every entry
-/// of the `CLAP_PATH` environment variable.
+/// Automatic CLAP search locations. `SOUNDCRAFT_CLAP_SEARCH_PATHS`, when present,
+/// exclusively supplies these roots (an empty value disables automatic discovery). Otherwise
+/// the standard OS locations are followed by the legacy additive `CLAP_PATH` entries.
+/// Explicit `scan_paths` and `add_search_dir` calls remain available.
 pub fn default_search_paths() -> Vec<PathBuf> {
-    let mut v = os_search_paths(
-        std::env::var_os("HOME").map(PathBuf::from),
-        std::env::var_os("COMMONPROGRAMFILES").map(PathBuf::from),
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
-    );
-    if let Some(cp) = std::env::var_os("CLAP_PATH") {
-        v.extend(std::env::split_paths(&cp).filter(|p| !p.as_os_str().is_empty()));
+    configured_search_paths(
+        os_search_paths(
+            std::env::var_os("HOME").map(PathBuf::from),
+            std::env::var_os("COMMONPROGRAMFILES").map(PathBuf::from),
+            std::env::var_os("LOCALAPPDATA").map(PathBuf::from),
+        ),
+        std::env::var_os("CLAP_PATH").as_deref(),
+        std::env::var_os("SOUNDCRAFT_CLAP_SEARCH_PATHS").as_deref(),
+    )
+}
+
+fn configured_search_paths(mut standard: Vec<PathBuf>, additional: Option<&OsStr>, exclusive: Option<&OsStr>) -> Vec<PathBuf> {
+    let paths = |value: &OsStr| std::env::split_paths(value).filter(|p| !p.as_os_str().is_empty()).collect::<Vec<_>>();
+    if let Some(value) = exclusive {
+        return paths(value);
     }
-    v
+    if let Some(value) = additional {
+        standard.extend(paths(value));
+    }
+    standard
 }
 
 /// The OS-specific standard locations, given the relevant environment values.
@@ -185,6 +199,30 @@ mod tests {
     }
 
     #[test]
+    fn absent_exclusive_paths_keep_standard_and_legacy_roots() {
+        let standard = vec![PathBuf::from("standard-one"), PathBuf::from("standard-two")];
+        let legacy = std::env::join_paths(["legacy-one", "legacy two"]).unwrap();
+        assert_eq!(
+            configured_search_paths(standard, Some(&legacy), None),
+            vec![PathBuf::from("standard-one"), PathBuf::from("standard-two"), PathBuf::from("legacy-one"), PathBuf::from("legacy two")]
+        );
+    }
+
+    #[test]
+    fn empty_exclusive_paths_disable_all_automatic_roots() {
+        assert!(configured_search_paths(vec![PathBuf::from("standard")], Some(OsStr::new("legacy")), Some(OsStr::new(""))).is_empty());
+    }
+
+    #[test]
+    fn exclusive_paths_replace_standard_and_legacy_roots() {
+        let exclusive = std::env::join_paths(["owned-fixture-one", "owned fixture two"]).unwrap();
+        assert_eq!(
+            configured_search_paths(vec![PathBuf::from("standard")], Some(OsStr::new("legacy")), Some(&exclusive)),
+            vec![PathBuf::from("owned-fixture-one"), PathBuf::from("owned fixture two")]
+        );
+    }
+
+    #[test]
     fn os_paths_cover_the_standard_locations() {
         let v = os_search_paths(Some("/home/u".into()), Some("C:/CPF".into()), Some("C:/LAD".into()));
         if cfg!(target_os = "macos") {
@@ -195,7 +233,6 @@ mod tests {
         } else {
             assert_eq!(v, vec![PathBuf::from("/home/u/.clap"), PathBuf::from("/usr/lib/clap"), PathBuf::from("/usr/local/lib/clap")]);
         }
-        assert!(default_search_paths().len() >= v.len().saturating_sub(1));
     }
 
     #[test]

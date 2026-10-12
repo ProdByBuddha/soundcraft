@@ -60,6 +60,9 @@ use soundcraft_time::{Range, Samples};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod send_automation;
+pub mod track_bounce;
+
 /// Default (stereo) main mix width. The actual width is [`main_channels`].
 pub const MAIN_CHANNELS: usize = 2;
 
@@ -200,6 +203,10 @@ struct Strip {
     /// MIDI notes currently sounding on the instrument (pitch), for note-offs at stops/seek.
     held: Vec<u8>,
     muted: bool,
+    /// Export-only volume bypass. Ordinary/realtime strips always leave this false.
+    skip_volume: bool,
+    /// Export tail: stop clip input/new note scheduling while processors keep ringing.
+    skip_source: bool,
     gr: f32,
     /// Per-clip effect chains (Clip Effects) and a scratch buffer to render clips into.
     clip_fx: HashMap<u64, ClipFx>,
@@ -274,6 +281,8 @@ impl Strip {
             sample: None,
             held: Vec::new(),
             muted: false,
+            skip_volume: false,
+            skip_source: false,
             gr: 0.0,
             clip_fx: HashMap::new(),
             clipbuf: Vec::new(),
@@ -669,12 +678,18 @@ impl MixEngine {
             self.strips.insert(t.id, st);
         }
         self.order = order;
-        // Master faders process the main mix.
+        // Master inserts are post-fader; ordinary strip inserts remain pre-fader.
         for t in s.tracks.iter().filter(|t| t.kind == TrackKind::Master && !t.inactive) {
             if let Some(strip) = self.strips.get_mut(&t.id) {
+                // Match ordinary faders: endpoints are the first and last included sample.
+                let last = pos.saturating_add(frames.saturating_sub(1) as i64);
+                let v0 = volume_db_at(t, pos);
+                let v1 = volume_db_at(t, last);
                 for (dst, src) in strip.buf.iter_mut().zip(self.main.iter()) {
                     if let (Some(d), Some(sr)) = (dst.get_mut(..frames), src.get(..frames)) {
-                        d.copy_from_slice(sr);
+                        for (i, (d, x)) in d.iter_mut().zip(sr).enumerate() {
+                            *d = x * lerp_gain(v0, v1, i, frames.saturating_sub(1));
+                        }
                     }
                 }
                 for (i, ins) in t.mixer.inserts.iter().enumerate() {
@@ -686,16 +701,9 @@ impl MixEngine {
                         slot.plugin.process(&mut strip.buf, frames);
                     }
                 }
-                let v0 = volume_db_at(t, pos);
-                let v1 = volume_db_at(t, pos + frames as i64);
-                for (ch, src) in strip.buf.iter().enumerate().take(self.main.len()) {
-                    if let Some(m) = self.main.get_mut(ch) {
-                        for i in 0..frames {
-                            let g = lerp_gain(v0, v1, i, frames);
-                            if let (Some(d), Some(x)) = (m.get_mut(i), src.get(i)) {
-                                *d = x * g;
-                            }
-                        }
+                for (dst, src) in self.main.iter_mut().zip(strip.buf.iter()) {
+                    if let (Some(d), Some(sr)) = (dst.get_mut(..frames), src.get(..frames)) {
+                        d.copy_from_slice(sr);
                     }
                 }
                 self.meters.entry(t.id).or_default().measure(&self.main, frames, 0.0);
@@ -746,22 +754,38 @@ impl MixEngine {
         let law = self.pan_law;
         for (i, snd) in t.mixer.sends.iter().enumerate() {
             let Some(snd) = snd else { continue };
-            if snd.mute || strip.muted {
+            if strip.muted {
+                continue;
+            }
+            let src = if snd.pre_fader { &strip.pre } else { &strip.buf };
+            let Route::Bus(b) = &snd.target else { continue };
+            let Some(dst) = self.busses.get_mut(b) else { continue };
+            let ordinary = !src_fmt.is_ambisonic() && !dst.fmt.is_ambisonic();
+            let mute = ordinary.then(|| send_automation::Reader::for_send(t, AutoParam::SendMute, i, pos)).flatten();
+            if mute.is_none() && snd.mute {
                 continue;
             }
             let lvl = send_level(t, i, snd.level_db, pos);
             let gain = db_to_gain(lvl);
-            let src = if snd.pre_fader { &strip.pre } else { &strip.buf };
-            let Route::Bus(b) = &snd.target else { continue };
-            let Some(dst) = self.busses.get_mut(b) else { continue };
             if gain <= 0.0 {
+                continue;
+            }
+            let pan = (ordinary && src.len() == 1 && dst.fmt == ChannelFormat::Stereo)
+                .then(|| send_automation::Reader::for_send(t, AutoParam::SendPan, i, pos))
+                .flatten();
+            if let Some(pan) = pan {
+                send_automation::apply_mono_stereo(src, frames, &mut dst.buf, gain, law, pos, pan, mute);
                 continue;
             }
             // Mono sends use the send's own pan; stereo sends go straight to L/R.
             let stereo = if src.len() == 1 { [snd.pan, 0.0] } else { [-1.0, 1.0] };
             let surround = snd.surround.as_ref().or(if snd.follow_main_pan { t.mixer.surround.as_ref() } else { None });
             let m = build_matrix(src_fmt, src.len(), dst.fmt, dst.buf.len(), &PanSpec { stereo, surround }, law);
-            apply_matrix(src, frames, &mut dst.buf, &m, gain);
+            if let Some(mute) = mute {
+                send_automation::apply_gated(src, frames, &mut dst.buf, &m, gain, pos, mute);
+            } else {
+                apply_matrix(src, frames, &mut dst.buf, &m, gain);
+            }
         }
         let spec = PanSpec { stereo: [pan_at(t, 0, pos), pan_at(t, 1, pos)], surround: t.mixer.surround.as_ref() };
         match &t.mixer.output {
@@ -834,7 +858,7 @@ fn process_strip(
         }
         TrackKind::Audio if live.monitor_only => {}
         TrackKind::Instrument | TrackKind::Midi if live.monitor_only => {}
-        TrackKind::Audio => {
+        TrackKind::Audio if !strip.skip_source => {
             let block = Range { start: pos, end: pos.saturating_add(frames as i64) };
             for clip in t.clips() {
                 if clip.muted || !clip.is_audio() || !clip.range().overlaps(&block) {
@@ -894,7 +918,9 @@ fn process_strip(
                 if let Some(ins) = &t.instrument {
                     apply_params(inst, ins, t, INSTRUMENT_SLOT, pos);
                 }
-                schedule_notes(s, t, pos, frames, inst, &mut strip.held);
+                if !strip.skip_source {
+                    schedule_notes(s, t, pos, frames, inst, &mut strip.held);
+                }
                 if strip.buf.len() >= 2 {
                     inst.plugin.process(&mut strip.buf, frames);
                 } else if let Some(c0) = strip.buf.first_mut() {
@@ -947,14 +973,15 @@ fn process_strip(
     // Endpoints are the first and last sample of this block. The next block starts on its own
     // first sample, so a breakpoint there does not ramp the block before it.
     let last = pos.saturating_add(frames.saturating_sub(1) as i64);
-    let mut v0 = volume_db_at(t, pos);
-    let mut v1 = volume_db_at(t, last);
+    let mut v0 = if strip.skip_volume { 0.0 } else { volume_db_at(t, pos) };
+    let mut v1 = if strip.skip_volume { 0.0 } else { volume_db_at(t, last) };
     // Trim automation (an offset on top of the volume curve).
-    if let Some(l) = t
-        .automation
-        .iter()
-        .find(|l| matches!(&l.param, AutoParam::Plugin { slot: u8::MAX, param } if param == "trim"))
-        .filter(|l| !l.points.is_empty())
+    if !strip.skip_volume
+        && let Some(l) = t
+            .automation
+            .iter()
+            .find(|l| matches!(&l.param, AutoParam::Plugin { slot: u8::MAX, param } if param == "trim"))
+            .filter(|l| !l.points.is_empty())
     {
         v0 += l.value_at(pos, 0.0);
         v1 += l.value_at(last, 0.0);
@@ -963,8 +990,10 @@ fn process_strip(
     if let Some(vid) = t.mixer.vca
         && let Some(vca) = s.tracks.iter().find(|x| x.id.0 == vid && x.kind == TrackKind::Vca)
     {
-        v0 += volume_db_at(vca, pos);
-        v1 += volume_db_at(vca, last);
+        if !strip.skip_volume {
+            v0 += volume_db_at(vca, pos);
+            v1 += volume_db_at(vca, last);
+        }
         if vca.mixer.mute {
             strip.muted = true;
         }

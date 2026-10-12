@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first interaction checklist against Pro Tools 2026.4.1) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined relink, batch naming and Bounce dialogs) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 How SoundCraft feels in the hands of a Pro Tools user: tools, modes, modifiers, shortcuts,
 windows, meters. Measured from `crates/model/src/session.rs` (tools, modes), the command
@@ -43,11 +43,17 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 | MIDI Editor, Score Editor, Event List | 🟡 | Dock height bug fixed (#113); notation editing shallow |
 | Transport, Big Counter, Memory Locations, Automation, Video, Universe, Renderer, UI Customization | ✅ present | |
 | Workspace / sound browser with previews | ❌ | G-16 |
+| Missing audio relink | 🟡 | Native Session Audio Health action, file picker/path entry, content validation, explicit legacy confirmation and retry after errors; automatic/batch relinking remains G-16 |
+| Batch track naming | 🟡 | Selected-track literal stages, preview and one Undo; stale revisions reject Apply; advanced controls and clip/file naming remain |
+| Bounce delivery sample rate | 🟡 | Common/custom independent delivery-rate controls; broader delivery options remain |
 | I/O Setup | 🟡 | Busses and paths; no hardware channel matrix (G-01) |
 | Preferences | 🟡 | Many settings stored, fewer honoured |
 | Window configurations, Tile/Cascade | 🟡 | Configurations ✅; Tile/Cascade in PR #151 |
 | Plugin windows | 🟡 | Generic parameter sliders; Pro Tools plugins have bespoke GUIs (#138 asks for skeuomorphic design); multi-page plugin views (#6) |
 | Command palette (Search) | ✅ | Over every command |
+| Track Bounce dialog (SC-MX37) | 🟡 partial | Track menu, clicked-track header menu and Cmd/Ctrl+Alt+Shift+B share an immutable source/range/revision preview. Explicit destination, format/depth/dither, volume/pan and tail controls; stale previews disable delivery, document replacement closes the dialog, and Cancel/Escape plus Enter cannot export |
+
+The [Track Bounce subset](track-bounce-files.md) has five original UI tests and an inspected 3200×2000 dialog image. Unix native delivery requires hard-link-capable destinations; web supports one file through the existing hook, with compilation evidence only. Aux/Master, hosted/latency-producing processing, real-time/multipath delivery and Windows native delivery remain unsupported. Audio effects start cold and clip effects have no independent postselection tails; integrated Float32 delivery retains finite headroom and rejects nonfinite rendered PCM without delivering a file. Rendering has no progress display or mid-render cancellation. This scoped update does not remeasure shortcut counts, UI fidelity or hour estimates.
 
 ## Look and meters
 
@@ -60,8 +66,15 @@ Legend: ✅ matches · 🟡 partial · ❌ missing.
 | Fader resolution, fine adjust, numeric entry | 🟡 | |
 | macOS system menu bar | ✅ | #10 |
 
+Integrated workflow details and remaining validation: [fork integration](fork-integration.md). Existing percentages and hours remain prior estimates.
+Save Session Copy In has a dedicated media preview, blocked-source reasons, explicit external-video limits, and stale-preview refresh that retains the typed destination. [Behavior and residual scope](session-copy.md).
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Combined native dialogs retain independent lifecycle/retry behavior and sample-rate controls; broad UI estimates unchanged |
+| 2026-10-12 | minor | Added native manual audio relink dialog and health-report refresh; no general UI parity claim |
+| 2026-10-12 | minor | Added partial SC-MX37 dialog interaction evidence and bounded delivery/format limits; assessment values unchanged |
+| 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | major | Created: tools, modes, shortcuts, windows and meters checklist against Pro Tools 2026.4.1 |

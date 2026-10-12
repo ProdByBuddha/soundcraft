@@ -1,7 +1,7 @@
 //! Native AIFF / AIFF-C reader and writer (Apple "Audio Interchange File Format" 1.3 and the
 //! AIFF-C draft: big-endian IFF chunks, 80-bit IEEE extended sample rate).
 
-use crate::pcm::{PcmKind, Quantizer, be_u16, be_u32, clamp_float, deinterleave, tag, validate_buffer};
+use crate::pcm::{PcmKind, Quantizer, be_u16, be_u32, deinterleave, finite_float, tag, validate_buffer};
 use crate::{AudioBuffer, AudioError, AudioInfo, BitDepth, FileFormat, Result, SampleFormat};
 
 /// AIFF-C version 1 timestamp for the FVER chunk.
@@ -218,7 +218,7 @@ pub(crate) fn encode(buf: &AudioBuffer, depth: BitDepth, dither: bool) -> Result
         for (ch, q) in buf.channels.iter().zip(qs.iter_mut()) {
             let s = ch.get(f).copied().unwrap_or(0.0);
             if is_float {
-                out.extend_from_slice(&clamp_float(s).to_be_bytes());
+                out.extend_from_slice(&finite_float(s).to_be_bytes());
             } else {
                 let v = q.quantize(s).to_be_bytes();
                 out.extend_from_slice(v.get(4 - bytes..).unwrap_or_default());

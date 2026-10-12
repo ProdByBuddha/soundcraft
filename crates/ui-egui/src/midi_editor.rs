@@ -298,7 +298,7 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
         }
     }
     // Keyboard: Cmd+A select all; arrows transpose (Shift = octave) and move by the grid.
-    if ui.rect_contains_pointer(roll) && !ui.ctx().egui_wants_keyboard_input() {
+    if ui.rect_contains_pointer(roll) && !ui.ctx().egui_wants_keyboard_input() && !app.dialogs.batch_rename_open() {
         let (all, up, down, left, right, shift) = ui.input(|i| {
             (
                 i.modifiers.command && i.key_pressed(egui::Key::A),
@@ -330,7 +330,10 @@ pub fn show(app: &mut SoundApp, ui: &mut Ui) {
             let _ = app.run("midi.notes_move", json!({"clip": cid.0, "indices": app.midi.selected, "ticks": ticks, "semitones": semi}));
         }
     }
-    if !app.midi.selected.is_empty() && ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
+    if !app.dialogs.batch_rename_open()
+        && !app.midi.selected.is_empty()
+        && ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
+    {
         let _ = app.run("midi.note_delete", json!({"clip": cid.0, "indices": app.midi.selected}));
         app.midi.selected.clear();
     }

@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~5% and ~110–180 h away (the alpha gate's three failing workflows)
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (readiness by audience with hours to ~95 %) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Master post-fader reference acceptance added to combined workflows; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 SoundCraft is a clean-room, pure-Rust digital audio workstation that aims at full parity with
 Avid Pro Tools, and then beyond it: faster, open, scriptable and agent-controllable. This page is
@@ -36,8 +36,8 @@ Detail: [target-app-parity.md](docs/target-app-parity.md#readiness-by-audience).
 **Why pre-alpha:** the core-workflow gate in [docs/roadmap.md](docs/roadmap.md#alpha-gate) fails.
 Editing, mixing, bouncing, and saving and reopening work end to end. But a Pro Tools user can't
 record from a chosen audio interface at a chosen buffer size (only the default devices, a fixed
-512-sample block, and takes held in RAM). They can't record MIDI from a keyboard (there is no
-MIDI device layer). And they can't bring a session in or hand one back (no AAF/OMF/`.ptx`).
+512-sample block, and unverified physical-volume recording acceptance). They can't record MIDI
+from a keyboard (there is no MIDI device layer). And they can't bring a session in or hand one back (no AAF/OMF/`.ptx`).
 Readiness (~40 %) sits right at the alpha bar, but a gate failure keeps the app pre-alpha. The
 2026-10-07 estimate ("~65 % overall, 110–150 h to 100 %") counted feature presence. This one
 measures readiness and adds hardware, localization and field bug reports.
@@ -122,6 +122,17 @@ mutated and truncated movies. Field reports from the first public week are track
 
 ## Progress log
 
+- **2026-10-12 (SC-MX02 native reference acceptance):** Master Fader gain now precedes its serial inserts, with unity copyback and output metering. Eight Mix and three Engine tests pass against independent nonlinear limiter references, including fader changes, ordinary pre-fader inserts, bypass/cascade, endpoint edges and native/strict Copy reopen. The Master ramp uses the last included frame; this is not sample-exact Volume automation or complete SC-MX11 acceptance. Hosted/hardware processing, Master routing/PDC and dither fidelity remain separate. No stage/readiness/hours change. See [master-post-fader.md](docs/master-post-fader.md).
+- **2026-10-12 (stored track-name acceptance):** a native two-track regression sets distinct multiline Unicode comments through commands, renames a track, rejects an occupied name without consuming pending Redo, then saves and opens the file in a fresh engine. Full Track objects, names and comments remain associated with their original IDs. UI dialog behavior and folder/output-bus label synchronization remain separate; no stage/readiness/hours change. See [fork-integration.md](docs/fork-integration.md).
+- **2026-10-12 (isolated plugin CI):** the published isolation checkpoint completed all six `cargo xtask ci` gates with the unfiltered workspace test command. Automatic discovery excludes external installed CLAP/VST3 roots and uses Apple system Audio Units, while owned host fixtures retain processing/state/editor/shutdown coverage. Observed loader events include those fixtures and Apple CoreAudio, with no external installed-plugin paths; external plugin, device and platform acceptance remain separate. See [plugin-test-isolation.md](docs/plugin-test-isolation.md). No stage/readiness/hours change.
+- **2026-10-12 (SC-MX11, partial):** mono-to-stereo Bus sends read pan per sample and ordinary Bus sends read exact mute steps. Static paths, pre/post-fader sources, level law and strip suppression stay consistent. Independent synthetic PCM, chunk/seek/loop and command/history/save references cover this subset. All seven AutoParam families, broader pan contexts, suspension/writing and platform/runtime acceptance remain open. No stage/readiness/hours change. See [send-automation.md](docs/send-automation.md).
+- **2026-10-12 (ED-56, partial):** [Selection repeat](docs/selection-repeat.md) shares immutable Duplicate/Repeat/Extend planning: silent-gap replacement, aggregate Shuffle ripple, Automation Follows Edit, boundary curves and exact clip metadata copies. Unsupported musical-width and partial-processing transformations remain explicit refusals; stage and estimates are unchanged.
+- **2026-10-12 (CI maintenance):** an equivalent video Mp3 match guard removes the Rust 1.95 Clippy stop. The combined native workspace passes all-target Clippy with warnings denied. Required CI attempts stop before broad installed-plugin test runtime; full workspace tests and complete CI remain unverified. Scoped source acceptance and device/plugin runtime remain separate. See [fork-integration.md](docs/fork-integration.md). No stage/readiness/hours change.
+- **2026-10-12 (safe audio Heal):** ordinary contiguous unprocessed audio splits merge without changing their samples, with selection remapping and one Undo. Unsupported fades, envelopes, effects, stretch, locks/groups and per-ID processing history return structured skipped reasons; no-op commands preserve document/history state. Advanced Heal and removed-silence restoration remain open; no stage/readiness/hours change. See [heal-safety.md](docs/heal-safety.md).
+- **2026-10-12 (combined fork workflows):** recording allocation reaches native take planning; Commit retains supported exact channel layouts; recovery isolates each document and validates reused bytes; Float32 files retain finite headroom; single-track names validate their stored form; Bounce Mix selects an independent delivery rate. These combine with the relink and batch naming workflows below. Physical-volume tests, broader Commit/delivery policies, recovery controls and independent fidelity checks remain. No readiness or hours remeasurement. See [fork-integration.md](docs/fork-integration.md).
+- **2026-10-12 (audio relink):** Session Audio Health offers user-selected relinking of missing audio with exact decoded PCM identity and metadata checks. Legacy sessions require explicit confirmation when no identity exists. Commands preserve source IDs, clips, timing and alternate takes, support undo/redo and save/reopen, and never open programmatic dialogs. Saved-file identities reflect the actual WAV PCM; autosave byte checks preserve earlier recordings. Automatic searches, batch relinking, video and interchange relinking remain out of scope. No readiness percentage change. See [media-relink.md](docs/media-relink.md).
+- **2026-10-12 (batch track naming):** selected tracks support literal replacement, end trimming, prefix/suffix text and decimal numbering with an old/new preview, atomic collision checks and one Undo. Edit, Mix and Track List context entries plus the manual shortcut are available. Advanced controls and clip/file naming remain; no readiness percentage or hours estimate change. See [batch-track-rename.md](docs/batch-track-rename.md).
+- **2026-10-12 (SC-MX37, partial):** [Track Bounce](docs/track-bounce-files.md) now delivers selected Audio/built-in Instrument files to explicit destinations without editing the document, undo history or recovery journal. Preview, volume/pan controls, ranges/tails and format choices are covered by focused engine/native/UI tests and a decoded native delivery. Unix hard-link-capable destinations and single-file web delivery are the first scope; hosted processing, Aux/Master, real-time paths, Windows native delivery and other manual options remain open. Its initial full CI attempt stopped at the video-crate Clippy error; touched-crate Clippy and WASM passed. Stage, readiness values and hour estimates are unchanged.
 - **2026-10-10 (UI docking):** Tracks and Groups, Clips, MIDI Editor, Memory Locations, and Undo History use movable panels. Edit and Mix retain separate arrangements; Clips and MIDI Editor belong to Edit. Transport, plug-in, and specialist utility windows retain their existing hosts. Panel moves and reset are available as UI commands, and saved UI preferences retain arrangements. Common toolbar and track record-enable buttons share interaction, accessible labels and keyboard focus through `craft-ui`, retaining blue tool selection and red record-arm states. No readiness percentage change.
 - **2026-10-10** — Stage re-normalized to **pre-alpha** by the core-workflow gate (interface recording, MIDI recording and session interchange fail). Full re-measure against Pro Tools Ultimate 2026.4.1 and the standard
   progress-docs set (this page, target-app parity, gaps, roadmap, UI/format/hardware/plugin/
@@ -139,10 +150,24 @@ mutated and truncated movies. Field reports from the first public week are track
 - **2026-10-05** — Foundation crates, Edit and Mix windows, playback, CLI/MCP, parity report,
   recording and punch, CLAP hosting, Elastic Audio, Beat Detective, release pipeline.
 
+Integrated workflow details and remaining validation: [fork integration](docs/fork-integration.md). Existing percentages and hours remain prior estimates.
+- **2026-10-12** — Save Copy validates all declared decoded audio before output, reports external video, and preserves the open document; [scope and limits](docs/session-copy.md). Conversion and selected-time copying remain open.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Verified SC-MX02 Master post-fader order with independent nonlinear PCM and command/native persistence references; broader runtime and estimates unchanged |
+| 2026-10-12 | minor | Verified native single-track rename/conflict/comment persistence by ID through Save/Open; broader label synchronization and estimates unchanged |
+| 2026-10-12 | minor | Recorded the completed isolated workspace CI checkpoint and retained separate external-plugin/device acceptance; estimates unchanged |
+| 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
+| 2026-10-12 | minor | Video lint maintenance passes combined workspace Clippy; full CI/native-plugin runtime remains unverified |
+| 2026-10-12 | minor | Bounded audio Heal preserves unprocessed material and refuses unsupported clip semantics; estimates unchanged |
+| 2026-10-12 | minor | Combined recording allocation, exact Commit layouts, isolated recovery, PCM-validated relink, Float32 preservation, stored/batch track names and Bounce Mix delivery rate; estimates unchanged |
+| 2026-10-12 | minor | Added user-selected missing-audio relink; G-16 remains open for broader session management |
+| 2026-10-12 | minor | Added bounded batch track naming; advanced manual controls remain, estimates unchanged |
+| 2026-10-12 | minor | Recorded partial SC-MX37 Track Bounce file delivery, verification and remaining options; stage and estimates unchanged |
+| 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | minor | Readiness-by-audience table with hours: full 950–1,450 h, mainstream 380–600 h, essentials 110–200 h |
 | 2026-10-10 | minor | Added mainstream practitioner ~36 % and essentials user ~57 % to the headline numbers |
 | 2026-10-10 | minor | Stage alpha → pre-alpha: the core-workflow gate fails on interface recording, MIDI recording and session interchange; alpha distance added |

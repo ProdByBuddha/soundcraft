@@ -1080,8 +1080,9 @@ fn view_menu(app: &mut SoundApp, ui: &mut Ui, track: &Track) {
 }
 
 fn track_context_menu(app: &mut SoundApp, ui: &mut Ui, id: TrackId) {
+    crate::batch_rename::context_menu(app, ui, id);
     let tid = id.0;
-    let items: [(&str, &str); 10] = [
+    let items: [(&str, &str); 11] = [
         ("Rename...", "ui.rename_track"),
         ("Duplicate...", "track.duplicate"),
         ("Make Inactive", "track.make_inactive"),
@@ -1089,6 +1090,7 @@ fn track_context_menu(app: &mut SoundApp, ui: &mut Ui, id: TrackId) {
         ("Delete", "track.delete"),
         ("Split into Mono", "track.split_into_mono"),
         ("Commit...", "track.commit"),
+        ("Bounce...", "track.bounce"),
         ("Freeze", "track.freeze"),
         ("Move to New Folder...", "track.move_to_new_folder"),
         ("Group...", "track.group"),
@@ -1098,6 +1100,8 @@ fn track_context_menu(app: &mut SoundApp, ui: &mut Ui, id: TrackId) {
             if cmd == "ui.rename_track" {
                 let name = app.engine.session().track(id).map(|t| t.name.clone()).unwrap_or_default();
                 app.dialogs.open_rename_track(id, &name);
+            } else if cmd == "track.bounce" {
+                app.dialogs.open_track_bounce(&app.engine, vec![id]);
             } else {
                 let _ = app.run(cmd, json!({"tracks": [tid]}));
             }

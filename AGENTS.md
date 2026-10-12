@@ -65,6 +65,8 @@ Parity is measured, not guessed: `crates/engine/catalog/menus.txt` lists the inc
 ## Quality gates (before every commit)
 `cargo xtask ci` = fmt check, `clippy --workspace --all-targets -D warnings`, tests, assets, layers, wasm check. Commit after each arc of work that builds; one topic per commit.
 
+Every new topic, merge and documentation commit must use `git commit -s` with the actual author identity. Before merging a PR, audit each new commit for a matching `Signed-off-by` trailer; do not rewrite already merged/shared main history.
+
 ## Release
 Push to the `release` branch to build signed installers for macOS (universal DMG), Windows (x64/x86 MSI + zip), Linux (AppImage, deb, rpm, tar.gz, Flatpak; riscv64 tar.gz), FreeBSD and Web (wasm zip). Version: `cargo xtask version [set X.Y.Z]`. See `docs/release-playbook.md` and craftrules `release/playbook.md`.
 

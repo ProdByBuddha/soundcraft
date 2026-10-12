@@ -85,14 +85,30 @@ pub fn specs() -> Vec<CommandSpec> {
             e.session_mut().edit.selected_tracks.pop();
             Ok(json!({}))
         }),
-        cmd!("edit.duplicate", "Duplicate", ["Edit"], Some("Cmd+D"), "{tracks?, start?, end?}", has_range, duplicate),
-        cmd!("edit.repeat", "Repeat...", ["Edit"], Some("Alt+R"), "{count: n}", has_range, repeat),
+        cmd!("edit.duplicate", "Duplicate", ["Edit"], Some("Cmd+D"), "{tracks?, start?, end?, timebase?: samples|ticks}", has_range, duplicate),
+        cmd!(
+            "edit.repeat",
+            "Repeat...",
+            ["Edit"],
+            Some("Alt+R"),
+            "{count: integer 1..999, tracks?, start?, end?, timebase?: samples|ticks}",
+            has_range,
+            repeat
+        ),
         cmd!("edit.shift", "Shift...", ["Edit"], Some("Alt+H"), "{by: samples|{seconds}, later?: bool}", has_range, shift),
         cmd!("edit.insert_silence", "Insert Silence", ["Edit"], Some("Cmd+Shift+E"), "{tracks?, start?, end?}", has_range, insert_silence),
         cmd!("edit.separate", "At Selection", ["Edit", "Separate"], Some("Cmd+E"), "{tracks?, at?|start/end}", has_selection, separate),
         cmd!("edit.separate_on_grid", "On Grid", ["Edit", "Separate"], None, "{tracks?, start?, end?}", has_range, separate_on_grid),
         cmd!("edit.separate_at_transients", "At Transients", ["Edit", "Separate"], None, "{sensitivity?: 0..1}", has_range, separate_at_transients),
-        cmd!("edit.heal", "Heal Separation", ["Edit"], Some("Cmd+H"), "{tracks?, start?, end?}", has_selection, heal),
+        cmd!(
+            "edit.heal",
+            "Heal Separation",
+            ["Edit"],
+            Some("Cmd+H"),
+            "{tracks?, start?, end?} — returns healed count and skipped pair reasons",
+            has_selection,
+            heal
+        ),
         cmd!("edit.trim_to_selection", "To Selection", ["Edit", "Trim"], Some("Cmd+T"), "{tracks?, start?, end?}", has_range, trim_to_selection),
         cmd!("edit.trim_start_to_insertion", "Start to Insertion", ["Edit", "Trim"], Some("Alt+Shift+7"), "{tracks?, at?}", has_selection, |e, p| {
             trim_edge(e, p, true)
@@ -448,44 +464,11 @@ fn extend_tracks(e: &mut Engine, dir: i64) -> Result<Value> {
 }
 
 fn duplicate(e: &mut Engine, p: &Value) -> Result<Value> {
-    let tracks = tracks_required(e, "edit.duplicate", p)?;
-    let range = range_param(e, "edit.duplicate", p)?;
-    if range.is_empty() {
-        return Err(bad("edit.duplicate", "selection is empty"));
-    }
-    let s = e.session_mut();
-    let mut n = 0;
-    for t in &tracks {
-        let clips = ops::copy_range(s, *t, range);
-        n += ops::paste(s, *t, range.end, &clips, range.len(), false).len();
-        if let Some(tr) = s.track_mut(*t) {
-            for l in &mut tr.automation {
-                let pts: Vec<_> = l.points.iter().filter(|p| range.contains(p.at)).copied().collect();
-                for pt in pts {
-                    l.set_point(pt.at + range.len(), pt.value);
-                }
-            }
-        }
-    }
-    s.edit.selection = range.shifted(range.len());
-    Ok(json!({"clips": n}))
+    crate::selection_repeat::run(e, p, crate::selection_repeat::Kind::Duplicate)
 }
 
 fn repeat(e: &mut Engine, p: &Value) -> Result<Value> {
-    let count = i64_or(p, "count", 1).clamp(1, 999);
-    let tracks = tracks_required(e, "edit.repeat", p)?;
-    let range = range_param(e, "edit.repeat", p)?;
-    if range.is_empty() {
-        return Err(bad("edit.repeat", "selection is empty"));
-    }
-    let s = e.session_mut();
-    for t in &tracks {
-        let clips = ops::copy_range(s, *t, range);
-        for k in 1..=count {
-            ops::paste(s, *t, range.start + range.len() * k, &clips, range.len(), false);
-        }
-    }
-    Ok(json!({"repeats": count}))
+    crate::selection_repeat::run(e, p, crate::selection_repeat::Kind::Repeat)
 }
 
 fn shift(e: &mut Engine, p: &Value) -> Result<Value> {
@@ -563,11 +546,14 @@ fn heal(e: &mut Engine, p: &Value) -> Result<Value> {
     let tracks = tracks_required(e, "edit.heal", p)?;
     let mut r = range_param(e, "edit.heal", p)?;
     if r.is_empty() {
-        r = soundcraft_time::Range::new(r.start - 1, r.start + 1);
+        r = soundcraft_time::Range::new(r.start.saturating_sub(1), r.start.saturating_add(1));
     }
-    let s = e.session_mut();
-    let n: usize = tracks.iter().map(|t| ops::heal(s, *t, r)).sum();
-    Ok(json!({"healed": n}))
+    let plan = ops::plan_heal(e.session(), &tracks, r);
+    let result = json!(plan.report);
+    if plan.report.healed > 0 {
+        plan.apply(e.session_mut());
+    }
+    Ok(result)
 }
 
 fn trim_to_selection(e: &mut Engine, p: &Value) -> Result<Value> {

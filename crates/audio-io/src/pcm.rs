@@ -89,7 +89,7 @@ fn decode_sample(s: &[u8], kind: PcmKind) -> f32 {
                 }
                 _ => 0.0,
             };
-            if v.is_finite() { v } else { 0.0 }
+            finite_float(v)
         }
     }
 }
@@ -156,9 +156,9 @@ impl Quantizer {
     }
 }
 
-/// Clamp a float sample to [-1, 1], mapping NaN to 0.
-pub(crate) fn clamp_float(x: f32) -> f32 {
-    if x.is_nan() { 0.0 } else { x.clamp(-1.0, 1.0) }
+/// Preserve finite float samples, including headroom and signed zero; silence NaN and infinity.
+pub(crate) fn finite_float(x: f32) -> f32 {
+    if x.is_finite() { x } else { 0.0 }
 }
 
 /// Check that a buffer is encodable: at least one channel and a non-zero sample rate.
