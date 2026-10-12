@@ -1,6 +1,6 @@
 # SoundCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined fork progress and validation limits) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (bounded audio Heal and retained validation limits) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Forward-looking plan. Status and numbers: [`../ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the ranked work list: [`gaps.md`](gaps.md).
@@ -10,6 +10,10 @@ G-16 progress (2026-10-12): user-selected missing-audio relinking now validates 
 preserves clip timing and supports undo/redo and persisted sessions. Automatic searches, batch
 relinking and broader session management remain. See [media-relink.md](media-relink.md).
 [Save Copy audio completeness](session-copy.md) now has strict preflight and a read-only media preview. This narrows session-file correctness work; conversion, selected-time export, video and other external-asset portability remain open.
+
+G-04 progress (2026-10-12): [Safe audio Heal](heal-safety.md) restores ordinary unprocessed
+audio splits, refuses unsupported clip processing and preserves no-op document/history state.
+Advanced Heal, removed silence and MIDI/video remain; stage and estimates are unchanged.
 
 ## Current focus
 
@@ -101,6 +105,7 @@ Integrated workflow details and remaining validation: [fork integration](fork-in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Recorded bounded safe audio Heal and its residual processing/workflow scope; estimates unchanged |
 | 2026-10-12 | minor | Recorded eight combined workflows and their residual checks without changing stage or estimates |
 | 2026-10-12 | minor | Recorded bounded manual audio relink progress without changing stage/readiness estimates |
 | 2026-10-12 | minor | Added bounded batch track naming progress; retained stage and estimates |
