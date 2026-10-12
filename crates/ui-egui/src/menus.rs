@@ -147,6 +147,7 @@ pub const AUDIOSUITE: &[(&str, &str)] = &[
 const DIALOG_COMMANDS: &[&str] = &[
     "clip.clear",
     "track.new",
+    "track.batch_rename",
     "file.bounce_mix",
     "session.new",
     "file.import_audio",
@@ -200,6 +201,7 @@ pub fn tree() -> Vec<MenuNode> {
         insert_path(&mut roots, line);
     }
     insert_path(&mut roots, "Window > Reset Panel Layout");
+    insert_path(&mut roots, "Track > Batch Rename Tracks");
     for (path, _) in MENU_WINDOWS {
         insert_path(&mut roots, path);
     }

@@ -1,6 +1,6 @@
 # SoundCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (alpha gate added; stage re-normalized to pre-alpha) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (bounded batch track naming workflow) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Forward-looking plan. Status and numbers: [`../ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the ranked work list: [`gaps.md`](gaps.md).
@@ -14,6 +14,12 @@ Hours are Opus 5.5 agent-hours.
 3. **MIDI devices** (G-02): input to armed tracks and instruments, output, thru, clock. ≈ 20–35 h.
 4. **macOS plugin hosting** (G-05): library-validation entitlement now (#153), then AU editors. ≈ 15–25 h.
 5. **A PR CI that runs `cargo xtask ci`** on Linux, macOS and Windows (G-14). ≈ 5–10 h.
+
+**2026-10-12 progress:** Batch track naming now supports literal replace or clear, trim at
+either end, prefix/suffix and decimal numbering with a name preview, atomic collision
+validation and one Undo step. See [`batch-track-rename.md`](batch-track-rename.md). Advanced
+rename controls, presets and batch clip/file naming remain in G-16. This bounded workflow
+does not change the readiness stage or the existing estimates.
 
 ## Alpha gate
 
@@ -86,5 +92,6 @@ There is no `cargo xtask scorecard` in this repo; the measured number is `cargo 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added bounded batch track naming progress; retained stage and estimates |
 | 2026-10-10 | minor | Added the alpha gate (3 of 6 core workflows fail → pre-alpha) |
 | 2026-10-10 | major | Created from ROADMAP.md's milestones and alpha list; added M12–M17 and the beta plan with estimates |
