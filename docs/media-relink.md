@@ -34,10 +34,9 @@ Relinking rejects loaded sources, unknown source IDs, unsupported identity versi
 files, files over 1 GiB, empty/corrupt audio, and excessive sample-rate conversion allocations.
 Filesystem-path relinking is native only; the web command returns an explicit unsupported error.
 
-Save and bundle identities describe the actual encoded-and-decoded saved audio. This matters
-because the existing Float32 WAV encoder clamps samples outside [-1, 1]. This feature does not
-change existing codec conversions or promise raw file-byte identity or lossless out-of-range
-saves. Decoder or sample-rate conversion changes can cause conservative verification failures
+Save and bundle identities describe the actual encoded-and-decoded saved audio. Finite
+Float32 WAV headroom is preserved by the integrated file-preservation fix; raw file-byte
+identity remains outside this workflow. Decoder or sample-rate conversion changes can cause conservative verification failures
 for an original file; a known mismatch still cannot be overridden. Session opening checks a stored
 identity and reports changed audio as unavailable rather than silently loading it. Autosave
 compares encoded bytes before reusing a source-ID filename, so relinking cannot substitute an
@@ -53,4 +52,5 @@ requirements; it copies no Avid binary code or resources.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Integrated finite Float32 preservation with saved PCM identity and relink coverage |
 | 2026-10-12 | major | Created: user-selected missing-audio validation, legacy consent, identity persistence and document-lifecycle behavior |

@@ -152,7 +152,7 @@ fn legacy_sources_need_explicit_consent_but_still_reject_metadata_mismatches() {
 fn saved_and_bundled_media_use_the_actual_encoded_pcm_identity_and_round_trip() {
     let f = Fixture::new();
     let (mut e, id) = imported(&wav(0.25, 1, 64, 48_000));
-    // Existing Float32 WAV encoding clamps; save identity must describe the saved PCM.
+    // Saved PCM identity and relink must preserve finite Float32 headroom.
     let mut session = e.session().clone();
     let buffer = AudioBuffer { sample_rate: 48_000, channels: vec![vec![1.25; 64]] };
     session.sources[0].audio_identity = Some(media::audio_identity(&buffer));
@@ -166,7 +166,7 @@ fn saved_and_bundled_media_use_the_actual_encoded_pcm_identity_and_round_trip() 
     let mut opened = Engine::default();
     assert_eq!(io::open_session(&mut opened, path.to_str().unwrap()).unwrap().len(), 1);
     relink(&mut opened, id, &relocated, false).unwrap();
-    assert_eq!(opened.session().pool.get(id).unwrap().buffer.channels[0][0], 1.0);
+    assert_eq!(opened.session().pool.get(id).unwrap().buffer.channels[0][0], 1.25);
     let second = f.path("Second/Second.scraft");
     io::save_session(&mut opened, second.to_str().unwrap()).unwrap();
     let mut reopened = Engine::default();
