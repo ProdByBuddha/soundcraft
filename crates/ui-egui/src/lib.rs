@@ -235,6 +235,7 @@ pub struct SoundApp {
     /// Folder for user plugin presets (native apps set it).
     pub preset_dir: Option<std::path::PathBuf>,
     last_autosave: Option<std::time::Instant>,
+    recovery_directory: Option<RecoveryDirectory>,
     pub dialogs: dialogs::Dialogs,
     pub meters: HashMap<TrackId, MeterDisplay>,
     pub main_meter: MeterDisplay,
@@ -272,6 +273,14 @@ pub struct SoundApp {
     pub video: video_track::VideoPool,
 }
 
+/// A directory reserved for one open document, including its not-yet-saved recordings.
+/// Keeping this outside the document also keeps undo, Save As and Save Copy from changing it.
+struct RecoveryDirectory {
+    generation: u64,
+    root: std::path::PathBuf,
+    path: std::path::PathBuf,
+}
+
 /// Whether another automation-write pass is due: the transport moved at least
 /// `step` since `last` in either direction. `last == i64::MIN` marks "never
 /// written", so the first pass after (re)start is always due. Saturating
@@ -298,6 +307,7 @@ impl SoundApp {
             autosave_dir: None,
             preset_dir: None,
             last_autosave: None,
+            recovery_directory: None,
             dialogs: dialogs::Dialogs::default(),
             meters: HashMap::new(),
             main_meter: MeterDisplay::default(),
@@ -475,14 +485,43 @@ impl SoundApp {
     /// Arm the input for the record-enabled tracks; a session never saved records into its
     /// autosave folder.
     fn arm_recorder(&mut self) -> Result<(), String> {
-        let name = soundcraft_engine::io::sanitize_name(&self.engine.session().name);
-        let unsaved_dir = self.autosave_dir.as_ref().map_or_else(std::env::temp_dir, |d| d.join(name));
-        let Some(r) = &mut self.recorder else { return Err("no audio input device".into()) };
-        let plan = soundcraft_engine::io::plan_takes(&self.engine, &unsaved_dir, r.channels).map_err(|e| e.to_string())?;
+        let channels = self.recorder.as_ref().map(|r| r.channels).ok_or_else(|| "no audio input device".to_string())?;
+        let unsaved_dir = if self.engine.path.is_some() { std::path::PathBuf::new() } else { self.recovery_directory()? };
+        let plan = soundcraft_engine::io::plan_takes(&self.engine, &unsaved_dir, channels).map_err(|e| e.to_string())?;
         if plan.is_empty() {
             return Err("no audio track is record-enabled".into());
         }
+        let Some(r) = &mut self.recorder else { return Err("no audio input device".into()) };
         r.arm(plan)
+    }
+
+    /// Atomically reserve a directory rather than deriving ownership from the session name.
+    /// New/Open/Revert get a fresh namespace; old autosaves remain available after restarting.
+    fn recovery_directory(&mut self) -> Result<std::path::PathBuf, String> {
+        let generation = self.engine.session_generation();
+        let root = self.autosave_dir.clone().unwrap_or_else(std::env::temp_dir);
+        if let Some(d) = &self.recovery_directory
+            && d.generation == generation
+            && d.root == root
+            && d.path.is_dir()
+        {
+            return Ok(d.path.clone());
+        }
+        std::fs::create_dir_all(&root).map_err(|e| format!("{}: {e}", root.display()))?;
+        // Forty-eight Unicode characters plus the suffix fit common 255-byte component limits.
+        let name: String = soundcraft_engine::io::sanitize_name(&self.engine.session().name).chars().take(48).collect();
+        for n in 0..10_000u32 {
+            let path = root.join(format!("{name}-{}-{n:04}", std::process::id()));
+            match std::fs::create_dir(&path) {
+                Ok(()) => {
+                    self.recovery_directory = Some(RecoveryDirectory { generation, root, path: path.clone() });
+                    return Ok(path);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(format!("{}: {e}", path.display())),
+            }
+        }
+        Err(format!("{}: no free recovery directory for {name}", root.display()))
     }
 
     /// Reads every live third-party plugin's state from the audio engine and stores it on its
@@ -513,18 +552,25 @@ impl SoundApp {
     /// Every two minutes, copy a modified session to the autosave folder (not while recording).
     /// Timed by the wall clock: egui's stands still while the window is hidden.
     fn autosave(&mut self) {
-        let Some(dir) = self.autosave_dir.clone() else { return };
+        if self.autosave_dir.is_none() {
+            return;
+        }
         let last = *self.last_autosave.get_or_insert_with(std::time::Instant::now);
         if last.elapsed().as_secs() < 120 || !self.engine.is_dirty() || self.engine.transport.recording {
             return;
         }
         self.last_autosave = Some(std::time::Instant::now());
         self.capture_plugin_states();
-        let name = soundcraft_engine::io::sanitize_name(&self.engine.session().name);
-        let path = dir.join(&name).join(format!("{name}.scraft"));
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
+        let dir = match self.recovery_directory() {
+            Ok(dir) => dir,
+            Err(e) => {
+                log::warn!("autosave failed: {e}");
+                return;
+            }
+        };
+        // A stable filename also survives session renaming/Save As without stale snapshots
+        // competing with the current one. The session's actual name is stored in the document.
+        let path = dir.join("Recovery.scraft");
         match soundcraft_engine::io::save_copy(&self.engine, &path.to_string_lossy()) {
             Ok(_) => log::info!("autosaved to {}", path.display()),
             Err(e) => log::warn!("autosave failed: {e}"),
@@ -1010,6 +1056,126 @@ mod tests {
         let _ = egui::Context::default().run_logic(&raw, |ctx| app.logic(ctx));
         assert!(app.latest_autosave().is_some());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn app_with_signal(level: f32) -> SoundApp {
+        let mut e = soundcraft_engine::Engine::default();
+        let s = e.session_mut();
+        let track = s.add_track(soundcraft_model::TrackKind::Audio, soundcraft_model::ChannelFormat::Mono, Some("Audio"));
+        let source = soundcraft_engine::io::add_source(
+            s,
+            "Signal",
+            soundcraft_audio_io::AudioBuffer { sample_rate: 48_000, channels: vec![vec![level; 480]] },
+            None,
+            soundcraft_audio_io::FileFormat::Wav,
+        );
+        let clip = s.new_clip_id();
+        soundcraft_engine::edit::place_clip(s, track, soundcraft_model::Clip::audio(clip, "Signal", source, 0, 0, 480));
+        SoundApp::new(e, None, Services::default())
+    }
+
+    fn force_autosave(app: &mut SoundApp) -> std::path::PathBuf {
+        app.last_autosave = std::time::Instant::now().checked_sub(std::time::Duration::from_secs(121));
+        app.autosave();
+        app.recovery_directory.as_ref().unwrap().path.join("Recovery.scraft")
+    }
+
+    fn recovered_signal(path: &std::path::Path) -> f32 {
+        let mut e = soundcraft_engine::Engine::default();
+        assert!(soundcraft_engine::io::open_session(&mut e, &path.to_string_lossy()).unwrap().is_empty());
+        e.session().pool.get(e.session().sources[0].id).unwrap().buffer.channels[0][0]
+    }
+
+    #[test]
+    fn same_named_open_documents_recover_their_own_audio() {
+        let dir = std::env::temp_dir().join(format!("soundcraft-recovery-same-name-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (mut a, mut b) = (app_with_signal(0.25), app_with_signal(-0.5));
+        assert_eq!(a.engine.session().name, b.engine.session().name);
+        assert_eq!(a.engine.session().sources[0].id, b.engine.session().sources[0].id);
+        a.autosave_dir = Some(dir.clone());
+        b.autosave_dir = Some(dir.clone());
+        let pa = force_autosave(&mut a);
+        let pb = force_autosave(&mut b);
+        assert_ne!(pa.parent(), pb.parent());
+        assert_eq!(recovered_signal(&pa), 0.25);
+        assert_eq!(recovered_signal(&pb), -0.5);
+        assert_eq!(force_autosave(&mut a), pa);
+        assert_eq!(recovered_signal(&pb), -0.5);
+        let mut restarted = SoundApp::new(soundcraft_engine::Engine::default(), None, Services::default());
+        restarted.autosave_dir = Some(dir.clone());
+        let latest = restarted.latest_autosave().unwrap();
+        assert!(latest == pa || latest == pb);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn recovery_directory_follows_document_replacement_not_edits_or_saves() {
+        let dir = std::env::temp_dir().join(format!("soundcraft-recovery-lifetime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = app_with_signal(0.25);
+        app.autosave_dir = Some(dir.clone());
+        let first_snapshot = force_autosave(&mut app);
+        let first_dir = app.recovery_directory().unwrap();
+        let generation = app.engine.session_generation();
+        app.run("track.new", json!({})).unwrap();
+        app.run("edit.undo", json!({})).unwrap();
+        app.run("edit.redo", json!({})).unwrap();
+        assert_eq!(app.engine.session_generation(), generation);
+        assert_eq!(app.recovery_directory().unwrap(), first_dir);
+        let saved = dir.join("saved/Named.scraft");
+        app.run("session.save_as", json!({"path": saved})).unwrap();
+        app.run("session.save_copy", json!({"path": dir.join("copy/Copy.scraft")})).unwrap();
+        assert_eq!(app.engine.session_generation(), generation);
+        assert_eq!(app.recovery_directory().unwrap(), first_dir);
+        assert!(app.run("session.open", json!({"path": dir.join("missing.scraft")})).is_err());
+        assert!(app.run("session.new", json!({"sample_rate": 0})).is_err());
+        assert_eq!(app.engine.session_generation(), generation);
+        assert_eq!(app.recovery_directory().unwrap(), first_dir);
+        app.run("session.new", json!({})).unwrap();
+        let new_dir = app.recovery_directory().unwrap();
+        assert_ne!(new_dir, first_dir);
+        app.run("session.open", json!({"path": saved})).unwrap();
+        let open_dir = app.recovery_directory().unwrap();
+        assert_ne!(open_dir, new_dir);
+        app.run("session.revert", json!({})).unwrap();
+        let revert_dir = app.recovery_directory().unwrap();
+        assert_ne!(revert_dir, open_dir);
+        app.run("session.close", json!({})).unwrap();
+        assert_ne!(app.recovery_directory().unwrap(), revert_dir);
+        assert_eq!(recovered_signal(&first_snapshot), 0.25);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unsaved_recordings_get_isolated_paths_without_autosave_enabled() {
+        let (mut a, mut b) = (app_with_signal(0.25), app_with_signal(-0.5));
+        assert!(a.autosave_dir.is_none() && b.autosave_dir.is_none());
+        a.engine.session_mut().tracks[0].mixer.record_arm = true;
+        b.engine.session_mut().tracks[0].mixer.record_arm = true;
+        let da = a.recovery_directory().unwrap();
+        let db = b.recovery_directory().unwrap();
+        let pa = soundcraft_engine::io::plan_takes(&a.engine, &da, 1).unwrap();
+        let pb = soundcraft_engine::io::plan_takes(&b.engine, &db, 1).unwrap();
+        assert_eq!((pa.len(), pb.len()), (1, 1));
+        assert_ne!(pa[0].2, pb[0].2);
+        assert!(pa[0].2.starts_with(&da) && pb[0].2.starts_with(&db));
+        let _ = std::fs::remove_dir_all(&da);
+        let _ = std::fs::remove_dir_all(&db);
+    }
+
+    #[test]
+    fn legacy_named_autosaves_are_still_found_after_restart() {
+        let dir = std::env::temp_dir().join(format!("soundcraft-recovery-legacy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let old_path = dir.join("Untitled/Untitled.scraft");
+        let old = app_with_signal(0.25);
+        soundcraft_engine::io::save_copy(&old.engine, &old_path.to_string_lossy()).unwrap();
+        let mut restarted = SoundApp::new(soundcraft_engine::Engine::default(), None, Services::default());
+        restarted.autosave_dir = Some(dir.clone());
+        assert_eq!(restarted.latest_autosave(), Some(old_path.clone()));
+        assert_eq!(recovered_signal(&old_path), 0.25);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
