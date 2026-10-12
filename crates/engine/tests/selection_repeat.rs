@@ -450,3 +450,90 @@ fn one_sample_selection_and_empty_lanes_keep_clear_boundary_semantics() {
     assert_eq!(t.clips().iter().filter(|c| c.start >= 1301 && c.start < 1304).count(), 3);
     assert_eq!(e.undo_history().len(), 1);
 }
+
+#[cfg(unix)]
+#[test]
+fn repeated_clip_metadata_survives_copy_and_track_bounce_and_keeps_heal_refusal_atomic() {
+    struct Temp(std::path::PathBuf);
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let temp = Temp(std::env::temp_dir().join(format!("soundcraft-repeat-copy-heal-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&temp.0);
+    std::fs::create_dir_all(&temp.0).unwrap();
+    let mut s = Session::default();
+    let track = s.add_track(TrackKind::Audio, ChannelFormat::Stereo, None);
+    let buffer = AudioBuffer { sample_rate: 48_000, channels: vec![[1.25, -2.5, -0.0, 0.25].repeat(16), [-2.5, 1.25, -0.0, -0.25].repeat(16)] };
+    let identity = soundcraft_engine::media::audio_identity(&buffer);
+    let source = io::add_source(&mut s, "Headroom", buffer, None, FileFormat::Wav);
+    s.sources.iter_mut().find(|src| src.id == source).unwrap().audio_identity = Some(identity.clone());
+    let left = s.new_clip_id();
+    let right = s.new_clip_id();
+    s.track_mut(track).unwrap().playlist_mut().unwrap().clips =
+        vec![Clip::audio(left, "Left", source, 0, 0, 32), Clip::audio(right, "Right", source, 32, 32, 32)];
+    for id in [left, right] {
+        s.edit.values.insert(format!("clip_fx.{}.gain", id.0), -6.0);
+    }
+    s.edit.flags.insert(format!("clip_fx.bypass.{}", right.0));
+    s.edit.selected_tracks = vec![track];
+    s.edit.selected_clips = vec![left, right];
+    s.edit.selection = Range::new(0, 64);
+    let mut e = Engine::new(s);
+    e.execute("edit.repeat", &json!({"count":1})).unwrap();
+    let copied = &e.session().track(track).unwrap().clips()[2..];
+    for c in copied {
+        assert_eq!(e.session().edit.values.get(&format!("clip_fx.{}.gain", c.id.0)), Some(&-6.0));
+        assert_eq!(e.session().edit.flag(&format!("clip_fx.bypass.{}", c.id.0)), c.start == 96);
+    }
+    let (snapshot, revision, history, mut journal) = (e.session_arc(), e.revision, e.undo_history(), e.journal.clone());
+    let dirty = e.is_dirty();
+    let copy = json!({"path":temp.0.join("native/Copy.scraft"),"expected_revision":revision});
+    let bounce = |start, path: &std::path::Path| json!({"tracks":[track],"path":path,"start":start,"end":start+64,"bit_depth":"32f","dither":false,"render_volume":false,"render_pan":false,"expected_revision":revision});
+    let repeated_path = temp.0.join("repeated.wav");
+    let repeated_bounce = bounce(64, &repeated_path);
+    let previews = (e.execute("session.save_copy_preview", &copy).unwrap(), e.execute("track.bounce_preview", &repeated_bounce).unwrap());
+    let heal = json!({"tracks":[track],"start":64,"end":128});
+    let result = e.execute("edit.heal", &heal).unwrap();
+    assert_eq!(result["healed"], 0);
+    assert!(result["skipped"].as_array().unwrap().iter().any(|pair| pair["reason"] == "clip_metadata"));
+    // Successful no-op commands remain in the macro journal; exports add no entries.
+    journal.push(("edit.heal".into(), heal));
+    assert!(Arc::ptr_eq(&snapshot, &e.session_arc()));
+    assert_eq!((e.revision, e.undo_history(), e.journal.clone()), (revision, history.clone(), journal.clone()));
+    assert_eq!(e.is_dirty(), dirty);
+    assert_eq!((e.execute("session.save_copy_preview", &copy).unwrap(), e.execute("track.bounce_preview", &repeated_bounce).unwrap()), previews);
+    let original_path = temp.0.join("original.wav");
+    e.execute("track.bounce", &bounce(0, &original_path)).unwrap();
+    e.execute("track.bounce", &repeated_bounce).unwrap();
+    let original_bytes = std::fs::read(original_path).unwrap();
+    assert_eq!(original_bytes, std::fs::read(repeated_path).unwrap());
+    let (info, decoded) = soundcraft_audio_io::decode(&original_bytes, Some("wav")).unwrap();
+    assert_eq!((info.format, info.sample_rate, info.channels, info.frames), (FileFormat::Wav, 48_000, 2, 64));
+    assert_eq!(info.sample_format, soundcraft_audio_io::SampleFormat::Float32);
+    assert!(decoded.channels.iter().all(|ch| ch.len() == 64));
+    assert!(decoded.channels.iter().flatten().any(|x| x.abs() > 1.0));
+    assert_eq!(decoded.channels, soundcraft_mix::render_clips(e.session(), track, Range::new(0, 64)));
+    assert_eq!(decoded.channels, soundcraft_mix::render_clips(e.session(), track, Range::new(64, 128)));
+    let render = soundcraft_mix::render_clips(e.session(), track, Range::new(0, 128));
+    assert!(render.iter().flatten().any(|x| x.abs() > 1.0));
+    for bundled in [false, true] {
+        let mut opened = Engine::default();
+        if bundled {
+            let (bytes, report) = soundcraft_engine::session_copy::bundle(&e, &temp.0.join("Copy.scraftz").to_string_lossy()).unwrap();
+            assert!(io::open_session_bytes(&mut opened, &report.output_path, &bytes).unwrap().is_empty());
+        } else {
+            e.execute("session.save_copy", &copy).unwrap();
+            assert!(io::open_session(&mut opened, &temp.0.join("native/Copy.scraft").to_string_lossy()).unwrap().is_empty());
+        }
+        assert_eq!(opened.session().source(source).unwrap().audio_identity.as_deref(), Some(identity.as_str()));
+        assert_eq!(opened.session().edit.values, snapshot.edit.values);
+        assert_eq!(opened.session().edit.flags, snapshot.edit.flags);
+        assert_eq!(opened.session().track(track).unwrap().clips(), snapshot.track(track).unwrap().clips());
+        assert_eq!(soundcraft_mix::render_clips(opened.session(), track, Range::new(0, 128)), render);
+    }
+    assert!(Arc::ptr_eq(&snapshot, &e.session_arc()));
+    assert_eq!((e.revision, e.undo_history(), e.journal.clone()), (revision, history, journal));
+    assert_eq!(e.is_dirty(), dirty);
+}

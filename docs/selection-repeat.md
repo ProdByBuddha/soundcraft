@@ -25,3 +25,14 @@ The planner caps 4096 targets/tracks, 100000 document/plan clips or playlists, 1
 Remaining ED-56 acceptance includes fractional-sample musical-width material mapping, variable-tempo audio/MIDI transformations, automation-only views, Time Grabber note merging, processed partial fragments/crossfades, richer locks/groups, marker/tempo/meter event repetition and a Pro Tools output comparison. General Cut/Paste/Clear, Paste Repeat to Fill and global song-time insertion use independent paths. Mixer regression evidence uses synthetic stereo DC, a nonconstant volume ramp, both edit modes and a 16-sample block. It compares each copy with independently calculated PCM and later preserved/rippled material. The existing mixer interpolates gain between each block's endpoints and samples Mute/Pan/Send/Plugin control at block boundaries; this arc does not change that timing policy or establish sample-exact incumbent behavior for arbitrary breakpoints or hosted effects.
 
 No readiness percentage, hours estimate or project stage is changed by this arc.
+
+## Combined fork validation
+
+Synthetic stereo headroom material with copied per-clip gain/bypass metadata survives native and bundled strict Copy with its clip identities, metadata and saved-source identity intact. Original and repeated Track Bounce Float32 WAVs decode to the same 2-channel, 64-frame PCM as each expected source range. Heal refuses the processed copied seam while preserving document identity, dirty state, Undo history and revision-bound Copy/Track previews. Successful no-op Heal retains its existing macro-journal entry; previews and exports add none. This is bounded synthetic acceptance, not hosted-effect history or Pro Tools fidelity.
+
+## Revision history
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-10-12 | minor | Added combined Copy/Track Bounce/Heal metadata and decoded-output regression coverage |
+| 2026-10-12 | minor | Added immutable bounded arrangement Duplicate/Repeat/Extend planning and explicit residual scope |

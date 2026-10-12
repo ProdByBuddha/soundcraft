@@ -1,11 +1,11 @@
 # Fork integration scope
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined fork scope, verified CI boundary and DCO workflow)
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined selection Repeat, verified CI boundary and DCO workflow)
 
 ## Fork integration, 2026-10-12
 
 The first fork checkpoint combined eight published changes while retaining each source commit and its history.
-Later waves add reviewed Track Bounce file delivery, strict Save Session Copy In and safe audio Heal on that verified head.
+Later waves add reviewed Track Bounce file delivery, strict Save Session Copy In, safe audio Heal and bounded selection Repeat on that verified head.
 This is source integration with synthetic regression coverage; hardware recording, installed
 licensed plug-ins, platform runtime acceptance and Pro Tools fidelity remain separate checks.
 Stage, readiness percentages and remaining-hours estimates have not been remeasured.
@@ -30,6 +30,7 @@ message-only amendment may use an explicit old-head force-with-lease; verify the
 | [Track Bounce files](track-bounce-files.md) | Immutable selected Audio/built-in Instrument export, exact finite Float32 headroom, nonfinite no-delivery policy and source-stop tails | Unix hard-link publication and one-file web subset; hosted/Aux/Master/real-time/Windows paths, rate conversion and further manual options |
 | [Save Session Copy In](session-copy.md) | Complete declared audio, validated references and destinations, actual saved-PCM identities and detached export snapshots preserve the open document | Audio conversion/timing options, original file bytes/BWF, video and external plugin files, whole-copy rollback and browser download retention |
 | [Safe audio Heal](heal-safety.md) | Contiguous ordinary audio splits preserve rendered samples, remap selection and use one Undo; unsupported processing returns skipped reasons without consuming history | Faded/enveloped/effected/stretched clips, MIDI/video, removed-silence restoration, richer presentation/sync points and selection/shortcut fidelity |
+| [Selection Duplicate and Repeat](selection-repeat.md) | Immutable full-range material/automation planning, exact copied per-clip metadata, silence replacement and aggregate Shuffle ripple | Fractional-width or variable-tempo remapping, partial processed clips, note-selection and broader manual policies |
 | [Bounce Mix delivery rate](bounce-sample-rate.md) | Independent bounded output rate, conversion and output-rate measurements | Dither/noise shaping, layout-aware loudness weighting and shared renderer workspace limits |
 
 The recorder keeps the isolated recovery directory and propagates allocation errors. Session
@@ -48,6 +49,11 @@ cancellation guards coexist with Track Bounce, Batch Rename and Relink in the co
 Heal preserves Copy's source identities and exact Track Bounce bytes for supported headroom
 material. Native and bundled copies of the healed playlist reopen with the surviving clip selection
 and unchanged PCM bits. A refused Heal keeps Copy and Track Bounce revision-bound previews current.
+Repeat gives copied clip gain/bypass metadata fresh identities. Native and bundled Copy retain that
+metadata and saved-source identity, while Track Bounce renders the repeated range like the original.
+Heal refuses those processed copied seams without changing the document, Undo history or revision-bound
+Copy/Track previews. Successful no-op Heal is still recorded in the existing macro-command journal;
+previews and exports add no journal entries.
 
 Required `cargo xtask ci` was attempted before every merge. The first checkpoints stopped at
 the video-codec Clippy error. An equivalent Mp3 match guard now removes that error, and the
@@ -65,6 +71,7 @@ a stale runner can check the previous checkout even when Cargo is invoked from t
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added bounded selection Repeat and copied-metadata Copy/Track/Heal interaction coverage; estimates unchanged |
 | 2026-10-12 | minor | Recorded verified video lint maintenance, the native-test runtime boundary and required DCO signoffs |
 | 2026-10-12 | minor | Added safe audio Heal integration and cross-feature Copy/Track Bounce identity, output and no-op preview regressions |
 | 2026-10-12 | minor | Added strict Copy integration, saved-PCM identities and combined immutable-state/dialog regressions |
