@@ -1,6 +1,6 @@
 # Fork integration scope
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined fork scope, verified CI boundary and DCO workflow)
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined fork scope, native track-name persistence, verified CI boundary and DCO workflow)
 
 ## Fork integration, 2026-10-12
 
@@ -25,7 +25,7 @@ message-only amendment may use an explicit old-head force-with-lease; verify the
 | [Recovery](autosave-recovery.md) | Separate per-open-document directories and exact-byte reuse preserve prior source-ID recordings | Interval/retention controls, asynchronous saving, cleanup and unavailable media |
 | [Manual audio relink](media-relink.md) | PCM identity/metadata checks, explicit legacy consent and document-scoped retry behavior | Automatic/batch search, video/interchange relink and raw file-byte fidelity |
 | [Float32 files](float32-file-preservation.md) | Finite headroom preserved through files, recordings and generated-source persistence | Broader depth/dither choices and delivery analysis |
-| Stored track names | Single rename checks uniqueness after 64-character truncation and returns the stored name | Folder/output-bus label synchronization is a separate workflow |
+| Stored track names | Single rename checks uniqueness after 64-character truncation and returns the stored name; native Save/Open retains exact track IDs, names and multiline Unicode comments after an occupied-name rejection | UI dialogs and folder/output-bus label synchronization are separate workflows |
 | [Batch track naming](batch-track-rename.md) | Literal replace/trim/add/number stages preview and apply atomically with one Undo | Advanced transforms, presets, clip/file naming and Score/MIDI context entries |
 | [Track Bounce files](track-bounce-files.md) | Immutable selected Audio/built-in Instrument export, exact finite Float32 headroom, nonfinite no-delivery policy and source-stop tails | Unix hard-link publication and one-file web subset; hosted/Aux/Master/real-time/Windows paths, rate conversion and further manual options |
 | [Save Session Copy In](session-copy.md) | Complete declared audio, validated references and destinations, actual saved-PCM identities and detached export snapshots preserve the open document | Audio conversion/timing options, original file bytes/BWF, video and external plugin files, whole-copy rollback and browser download retention |
@@ -49,6 +49,13 @@ Heal preserves Copy's source identities and exact Track Bounce bytes for support
 material. Native and bundled copies of the healed playlist reopen with the surviving clip selection
 and unchanged PCM bits. A refused Heal keeps Copy and Track Bounce revision-bound previews current.
 
+Stored-name acceptance now has a native two-track command regression: distinct comments,
+one trimmed rename, an occupied-name `BadParams` error that preserves document/history state,
+an exercised pending Redo, actual Save and Open in a fresh engine. Exact full Track objects are
+checked by stable ID, with independent name/comment expectations. This verifies headless metadata
+persistence; it does not establish dialog/widget behavior, continuous typing gestures, physical
+removable-volume permissions or broader label synchronization.
+
 Required `cargo xtask ci` was attempted before every merge. The first checkpoints stopped at
 the video-codec Clippy error. An equivalent Mp3 match guard now removes that error, and the
 combined native workspace passes all-target Clippy with warnings denied. Required CI attempts
@@ -65,6 +72,7 @@ a stale runner can check the previous checkout even when Cargo is invoked from t
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added native stored-name/conflict/comment Save/Open acceptance without changing broader label-sync or runtime limits |
 | 2026-10-12 | minor | Recorded verified video lint maintenance, the native-test runtime boundary and required DCO signoffs |
 | 2026-10-12 | minor | Added safe audio Heal integration and cross-feature Copy/Track Bounce identity, output and no-op preview regressions |
 | 2026-10-12 | minor | Added strict Copy integration, saved-PCM identities and combined immutable-state/dialog regressions |

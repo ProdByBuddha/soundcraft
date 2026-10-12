@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~5% and ~110–180 h away (the alpha gate's three failing workflows)
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (safe audio Heal and verified CI boundary; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (safe audio Heal, native track-name persistence and verified CI boundary; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 SoundCraft is a clean-room, pure-Rust digital audio workstation that aims at full parity with
 Avid Pro Tools, and then beyond it: faster, open, scriptable and agent-controllable. This page is
@@ -122,6 +122,7 @@ mutated and truncated movies. Field reports from the first public week are track
 
 ## Progress log
 
+- **2026-10-12 (stored track-name acceptance):** a native two-track regression sets distinct multiline Unicode comments through commands, renames a track, rejects an occupied name without consuming pending Redo, then saves and opens the file in a fresh engine. Full Track objects, names and comments remain associated with their original IDs. UI dialog behavior and folder/output-bus label synchronization remain separate; no stage/readiness/hours change. See [fork-integration.md](docs/fork-integration.md).
 - **2026-10-12 (CI maintenance):** an equivalent video Mp3 match guard removes the Rust 1.95 Clippy stop. The combined native workspace passes all-target Clippy with warnings denied. Required CI attempts stop before broad installed-plugin test runtime; full workspace tests and complete CI remain unverified. Scoped source acceptance and device/plugin runtime remain separate. See [fork-integration.md](docs/fork-integration.md). No stage/readiness/hours change.
 - **2026-10-12 (safe audio Heal):** ordinary contiguous unprocessed audio splits merge without changing their samples, with selection remapping and one Undo. Unsupported fades, envelopes, effects, stretch, locks/groups and per-ID processing history return structured skipped reasons; no-op commands preserve document/history state. Advanced Heal and removed-silence restoration remain open; no stage/readiness/hours change. See [heal-safety.md](docs/heal-safety.md).
 - **2026-10-12 (combined fork workflows):** recording allocation reaches native take planning; Commit retains supported exact channel layouts; recovery isolates each document and validates reused bytes; Float32 files retain finite headroom; single-track names validate their stored form; Bounce Mix selects an independent delivery rate. These combine with the relink and batch naming workflows below. Physical-volume tests, broader Commit/delivery policies, recovery controls and independent fidelity checks remain. No readiness or hours remeasurement. See [fork-integration.md](docs/fork-integration.md).
@@ -152,6 +153,7 @@ Integrated workflow details and remaining validation: [fork integration](docs/fo
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Verified native single-track rename/conflict/comment persistence by ID through Save/Open; broader label synchronization and estimates unchanged |
 | 2026-10-12 | minor | Video lint maintenance passes combined workspace Clippy; full CI/native-plugin runtime remains unverified |
 | 2026-10-12 | minor | Bounded audio Heal preserves unprocessed material and refuses unsupported clip semantics; estimates unchanged |
 | 2026-10-12 | minor | Combined recording allocation, exact Commit layouts, isolated recovery, PCM-validated relink, Float32 preservation, stored/batch track names and Bounce Mix delivery rate; estimates unchanged |
