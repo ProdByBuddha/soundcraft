@@ -144,6 +144,7 @@ mutated and truncated movies. Field reports from the first public week are track
   recording and punch, CLAP hosting, Elastic Audio, Beat Detective, release pipeline.
 
 Integrated workflow details and remaining validation: [fork integration](docs/fork-integration.md). Existing percentages and hours remain prior estimates.
+- **2026-10-12** — Save Copy validates all declared decoded audio before output, reports external video, and preserves the open document; [scope and limits](docs/session-copy.md). Conversion and selected-time copying remain open.
 
 ## Revision history
 
@@ -153,6 +154,7 @@ Integrated workflow details and remaining validation: [fork integration](docs/fo
 | 2026-10-12 | minor | Added user-selected missing-audio relink; G-16 remains open for broader session management |
 | 2026-10-12 | minor | Added bounded batch track naming; advanced manual controls remain, estimates unchanged |
 | 2026-10-12 | minor | Recorded partial SC-MX37 Track Bounce file delivery, verification and remaining options; stage and estimates unchanged |
+| 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | minor | Readiness-by-audience table with hours: full 950–1,450 h, mainstream 380–600 h, essentials 110–200 h |
 | 2026-10-10 | minor | Added mainstream practitioner ~36 % and essentials user ~57 % to the headline numbers |
 | 2026-10-10 | minor | Stage alpha → pre-alpha: the core-workflow gate fails on interface recording, MIDI recording and session interchange; alpha distance added |

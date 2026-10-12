@@ -77,6 +77,8 @@ When you close a gap, delete its entry (or shrink it) in the same PR, and bump t
 
 ### G-04. Correctness bugs in "done" features
 
+- **Session copy:** [strict audio preflight and manifest](session-copy.md) cover all declared decoded sources while preserving missing-media ordinary saves/recovery. Conversion, selected-time export, original-file bytes/BWF metadata, video, external plugin-file inventory and whole-copy rollback remain open (manual-analysis ED-03 stays partial).
+
 Open on 2026-10-10 (several have PRs open):
 editing #3, #5, #140, #144; clip/session #86 (PR #123), #88 (PR #130), #91 (PR #124), #92 (PR #132);
 automation #104 (PR #134); mix/bounce #59 (PR #131), #103 (PR #133), #152; playback #101 (PR #129);
@@ -215,5 +217,6 @@ Remaining: Aux/Master and hosted processing, latency-producing effects, real-tim
 | 2026-10-12 | minor | Narrowed G-16: manual audio relink added; automatic/batch searches and broader session management remain |
 | 2026-10-12 | minor | Narrowed G-16: bounded batch track naming added; advanced controls and clip/file workflows remain |
 | 2026-10-12 | minor | Recorded partial SC-MX37 Track Bounce support and explicit residuals; ranked gap estimates unchanged |
+| 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | minor | Marked the alpha blockers (G-01, G-02, G-03; parts of G-05 and G-06) from the core-workflow gate |
 | 2026-10-10 | major | Created from the full re-measure against Pro Tools Ultimate 2026.4.1: 22 ranked gaps with evidence and estimates |

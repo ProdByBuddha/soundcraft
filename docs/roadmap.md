@@ -9,6 +9,7 @@ Hours are Opus 5.5 agent-hours.
 G-16 progress (2026-10-12): user-selected missing-audio relinking now validates metadata/content,
 preserves clip timing and supports undo/redo and persisted sessions. Automatic searches, batch
 relinking and broader session management remain. See [media-relink.md](media-relink.md).
+[Save Copy audio completeness](session-copy.md) now has strict preflight and a read-only media preview. This narrows session-file correctness work; conversion, selected-time export, video and other external-asset portability remain open.
 
 ## Current focus
 
@@ -104,5 +105,6 @@ Integrated workflow details and remaining validation: [fork integration](fork-in
 | 2026-10-12 | minor | Recorded bounded manual audio relink progress without changing stage/readiness estimates |
 | 2026-10-12 | minor | Added bounded batch track naming progress; retained stage and estimates |
 | 2026-10-12 | minor | Added the partial SC-MX37 follow-up to the bounce milestone; alpha gate and estimates unchanged |
+| 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | minor | Added the alpha gate (3 of 6 core workflows fail → pre-alpha) |
 | 2026-10-10 | major | Created from ROADMAP.md's milestones and alpha list; added M12–M17 and the beta plan with estimates |

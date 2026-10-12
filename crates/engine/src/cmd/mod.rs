@@ -27,6 +27,7 @@ mod options;
 mod plugin_state;
 mod query;
 mod sampler;
+mod session_copy;
 mod setup_more;
 mod surround;
 mod track;
@@ -104,6 +105,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
     SPECS.get_or_init(|| {
         let mut v = Vec::new();
         v.extend(file::specs());
+        v.extend(session_copy::specs());
         v.extend(edit::specs());
         v.extend(edit_more::specs());
         v.extend(view::specs());

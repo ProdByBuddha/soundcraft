@@ -351,14 +351,29 @@ impl SoundApp {
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
-        if id.starts_with("session.save") || id.starts_with("file.bounce") {
+        if id == "session.save_copy" {
+            soundcraft_engine::session_copy::check_revision(&self.engine, params.get("expected_revision")).map_err(|err| err.to_string())?;
+            let mut copy_params = params.clone();
+            if let Some(object) = copy_params.as_object_mut() {
+                object.remove("expected_revision");
+            }
+            // Capture live plugin state into the export only. The open document and its history
+            // must not change when making a copy, even when plugins have edited opaque state.
+            let states = self.player.as_ref().map(|player| player.capture_states()).unwrap_or_default();
+            let mut copy = detached_copy(&self.engine, states)?;
+            return copy.execute(id, &copy_params).map_err(|err| {
+                self.ui.status = err.to_string();
+                err.to_string()
+            });
+        }
+        if (id.starts_with("session.save") && id != "session.save_copy_preview") || id.starts_with("file.bounce") {
             // Third-party plugins keep state the session can't see: store it first.
             self.capture_plugin_states();
         }
         match self.engine.execute(id, &params) {
             Ok(v) => {
                 if matches!(id, "session.new" | "session.open" | "session.close" | "session.revert") {
-                    if matches!(self.dialogs.open, Some(dialogs::Dialog::RelinkAudio { .. })) {
+                    if matches!(self.dialogs.open, Some(dialogs::Dialog::RelinkAudio { .. } | dialogs::Dialog::SaveCopy { .. })) {
                         self.dialogs.open = None;
                     }
                     self.dialogs.clear_batch_rename();
@@ -990,6 +1005,17 @@ impl SoundApp {
     }
 }
 
+fn detached_copy(original: &Engine, states: Vec<(TrackId, usize, Vec<u8>)>) -> Result<Engine, String> {
+    let mut copy = Engine::new(original.session().clone());
+    copy.path = original.path.clone();
+    for (track, slot, data) in states {
+        let slot = if slot == soundcraft_mix::INSTRUMENT_SLOT { json!("instrument") } else { json!(slot) };
+        let state = soundcraft_model::b64::encode(&data);
+        copy.execute("mix.insert_state", &json!({"track": track.0, "slot": slot, "state": state})).map_err(|err| err.to_string())?;
+    }
+    Ok(copy)
+}
+
 fn feed_meter(d: &mut MeterDisplay, peak: [f32; 2], gr: f32, dt: f32) {
     // Instant attack, ~26 dB/s release, 2 s peak hold.
     let fall = 10f32.powf(-26.0 * dt / 20.0);
@@ -1020,6 +1046,21 @@ fn feed_meter(d: &mut MeterDisplay, peak: [f32; 2], gr: f32, dt: f32) {
 #[cfg(test)]
 mod tests {
     use super::{Services, SoundApp, automation_step_due};
+
+    #[test]
+    fn detached_copy_captures_fake_plugin_state_without_mutating_or_opening_plugins() {
+        let mut e = soundcraft_engine::demo::demo_engine();
+        let track = e.session().tracks[0].id;
+        e.session_mut().track_mut(track).unwrap().mixer.inserts[0] = Some(soundcraft_model::Insert::new("synthetic-never-opened"));
+        e.path = Some("/original/Song.scraft".into());
+        let (before, revision, dirty, history, journal) = (e.session_arc(), e.revision, e.is_dirty(), e.undo_history(), e.journal.clone());
+        let copy = super::detached_copy(&e, vec![(track, 0, b"synthetic state".to_vec())]).unwrap();
+        assert_eq!(copy.path, e.path);
+        assert_eq!(copy.session().track(track).unwrap().mixer.inserts[0].as_ref().unwrap().state_bytes().unwrap(), b"synthetic state");
+        assert!(std::sync::Arc::ptr_eq(&before, &e.session_arc()));
+        assert_eq!((e.revision, e.is_dirty(), e.undo_history(), e.journal.clone()), (revision, dirty, history, journal));
+        assert!(e.session().track(track).unwrap().mixer.inserts[0].as_ref().unwrap().state.is_none());
+    }
     use serde_json::json;
 
     #[test]

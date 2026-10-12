@@ -644,7 +644,7 @@ pub fn save_copy(e: &Engine, path: &str) -> Result<usize> {
 /// File › Save Session Copy In: a normal session folder that does not rename, retarget or
 /// clean the session that stays open.
 pub fn save_session_copy(e: &Engine, path: &str) -> Result<usize> {
-    write_session(e.session(), path, false).map(|(_, n, _)| n)
+    crate::session_copy::save(e, path).map(|copy| copy.audio_files_written)
 }
 
 /// Write `session` to `path`; returns the session with updated media paths, the number of audio
@@ -730,7 +730,7 @@ pub fn replace_file(tmp: &Path, file: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn sync_dir(dir: &Path) {
+pub(crate) fn sync_dir(dir: &Path) {
     let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
     let _ = std::fs::File::open(dir).and_then(|d| d.sync_all());
 }
@@ -744,7 +744,7 @@ fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 /// Copy the session file about to be replaced to `Backups/<name> backup <n>.<ext>`, keeping the
 /// newest ten.
-fn back_up(file: &Path) {
+pub(crate) fn back_up(file: &Path) {
     let (Some(dir), Some(stem), Some(ext)) = (file.parent(), file.file_stem().and_then(|x| x.to_str()), file.extension().and_then(|x| x.to_str()))
     else {
         return;
@@ -797,6 +797,15 @@ fn same_path(a: &Path, b: &Path) -> bool {
 /// holds exactly these bytes, so saving never replaces audio; returns the name and whether it was
 /// written.
 fn store_wav(dir: &Path, stem: &str, bytes: &[u8]) -> Result<(String, bool)> {
+    store_wav_with_policy(dir, stem, bytes, false)
+}
+
+/// Explicit portable copies must not reuse a symlink to media outside their folder.
+pub(crate) fn store_copy_wav(dir: &Path, stem: &str, bytes: &[u8]) -> Result<(String, bool)> {
+    store_wav_with_policy(dir, stem, bytes, true)
+}
+
+fn store_wav_with_policy(dir: &Path, stem: &str, bytes: &[u8], reject_links: bool) -> Result<(String, bool)> {
     use std::io::Write;
     for k in 0..10_000u32 {
         let name = if k == 0 { format!("{stem}.wav") } else { format!("{stem}_{k:02}.wav") };
@@ -810,6 +819,9 @@ fn store_wav(dir: &Path, stem: &str, bytes: &[u8]) -> Result<(String, bool)> {
                 return Ok((name, true));
             }
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                if reject_links && std::fs::symlink_metadata(&path).is_ok_and(|m| !m.is_file() || m.file_type().is_symlink()) {
+                    return Err(EngineError::Io(format!("{}: portable copies can reuse only regular media files", path.display())));
+                }
                 if std::fs::metadata(&path).is_ok_and(|m| m.len() == bytes.len() as u64) && std::fs::read(&path).is_ok_and(|b| b == bytes) {
                     return Ok((name, false));
                 }

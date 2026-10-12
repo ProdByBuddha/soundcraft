@@ -67,6 +67,7 @@ The [Track Bounce subset](track-bounce-files.md) has five original UI tests and 
 | macOS system menu bar | ✅ | #10 |
 
 Integrated workflow details and remaining validation: [fork integration](fork-integration.md). Existing percentages and hours remain prior estimates.
+Save Session Copy In has a dedicated media preview, blocked-source reasons, explicit external-video limits, and stale-preview refresh that retains the typed destination. [Behavior and residual scope](session-copy.md).
 
 ## Revision history
 
@@ -75,4 +76,5 @@ Integrated workflow details and remaining validation: [fork integration](fork-in
 | 2026-10-12 | minor | Combined native dialogs retain independent lifecycle/retry behavior and sample-rate controls; broad UI estimates unchanged |
 | 2026-10-12 | minor | Added native manual audio relink dialog and health-report refresh; no general UI parity claim |
 | 2026-10-12 | minor | Added partial SC-MX37 dialog interaction evidence and bounded delivery/format limits; assessment values unchanged |
+| 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | major | Created: tools, modes, shortcuts, windows and meters checklist against Pro Tools 2026.4.1 |

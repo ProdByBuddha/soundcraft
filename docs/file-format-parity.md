@@ -23,7 +23,7 @@ Legend: ✅ supported and tested · 🟡 partial · ❌ missing · — not appli
 | OMF | import/export | ❌ | ❌ | Legacy, still delivered by some editors |
 | Media Composer–compatible session | export | ❌ | ❌ | AAF variant |
 | ADM BWF (Dolby Atmos master) | import/export | ❌ | ❌ | G-12 |
-| SoundCraft session `.scraft` + `Audio Files/` | — | ✅ | ✅ | JSON (serde); mutated-file property test loads or fails cleanly; plugin state embedded |
+| SoundCraft session `.scraft` + `Audio Files/` | — | ✅ | ✅ | JSON (serde); mutated-file property test loads or fails cleanly; plugin state embedded; [Save Copy](session-copy.md) requires complete decoded audio; external video/plugin files and conversion remain open |
 | Missing audio relink in `.scraft` / bundles | documented workflow | 🟡 | 🟡 | Native user-selected audio, optional versioned PCM identity and metadata validation; legacy confirmation; no automatic search or video relink ([details](media-relink.md)) |
 | Import Session Data (from another session) | Pro Tools sessions | 🟡 | — | From `.scraft` only |
 | Session info as text | export | — | ✅ | `file.export_session_text` |
@@ -93,4 +93,5 @@ Integrated workflow details and remaining validation: [fork integration](fork-in
 | 2026-10-12 | minor | Finite Float32 headroom and bounded independent Bounce Mix sample rate integrated with saved PCM identity |
 | 2026-10-12 | minor | Backward-compatible optional PCM identity; known changed media stays unavailable; manual audio relink persists across save/bundle reopening |
 | 2026-10-12 | minor | Recorded partial SC-MX37 selected-track format/delivery evidence and Float32/platform residuals; assessment values unchanged |
+| 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | major | Created: format inventory against Pro Tools 2026.4.1's declared document types and import/bounce options |
