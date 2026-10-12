@@ -1,13 +1,14 @@
 # Fork integration scope
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined selection Repeat, verified CI boundary and DCO workflow)
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Send/Repeat playback, verified CI boundary and DCO workflow)
 
 ## Fork integration, 2026-10-12
 
 The first fork checkpoint combined eight published changes while retaining each source commit and its history.
-Later waves add reviewed Track Bounce file delivery, strict Save Session Copy In, safe audio Heal and bounded selection Repeat on that verified head.
+Later waves add reviewed Track Bounce file delivery, strict Save Session Copy In, safe audio Heal,
+bounded selection Repeat and send pan/mute playback on that verified head.
 This is source integration with synthetic regression coverage; hardware recording, installed
-licensed plug-ins, platform runtime acceptance and Pro Tools fidelity remain separate checks.
+plug-ins, platform runtime acceptance and Pro Tools fidelity remain separate checks.
 Stage, readiness percentages and remaining-hours estimates have not been remeasured.
 
 The fork's `main` branch is our ongoing integration target. Start new feature branches from
@@ -31,6 +32,7 @@ message-only amendment may use an explicit old-head force-with-lease; verify the
 | [Save Session Copy In](session-copy.md) | Complete declared audio, validated references and destinations, actual saved-PCM identities and detached export snapshots preserve the open document | Audio conversion/timing options, original file bytes/BWF, video and external plugin files, whole-copy rollback and browser download retention |
 | [Safe audio Heal](heal-safety.md) | Contiguous ordinary audio splits preserve rendered samples, remap selection and use one Undo; unsupported processing returns skipped reasons without consuming history | Faded/enveloped/effected/stretched clips, MIDI/video, removed-silence restoration, richer presentation/sync points and selection/shortcut fidelity |
 | [Selection Duplicate and Repeat](selection-repeat.md) | Immutable full-range material/automation planning, exact copied per-clip metadata, silence replacement and aggregate Shuffle ripple | Fractional-width or variable-tempo remapping, partial processed clips, note-selection and broader manual policies |
+| [Send automation playback](send-automation.md) | Per-sample mono-to-stereo ordinary-Bus SendPan and stepped ordinary-Bus SendMute; repeated curves retain audible output and strict Copy persistence | Full AutoParam/reference matrix, wider pan/non-Bus/Ambisonic contexts, suspension/writing, callback budgets and platform/plugin acceptance |
 | [Bounce Mix delivery rate](bounce-sample-rate.md) | Independent bounded output rate, conversion and output-rate measurements | Dither/noise shaping, layout-aware loudness weighting and shared renderer workspace limits |
 
 The recorder keeps the isolated recovery directory and propagates allocation errors. Session
@@ -54,12 +56,18 @@ metadata and saved-source identity, while Track Bounce renders the repeated rang
 Heal refuses those processed copied seams without changing the document, Undo history or revision-bound
 Copy/Track previews. Successful no-op Heal is still recorded in the existing macro-command journal;
 previews and exports add no journal entries.
+With Automation Follows Edit enabled, whole mono repeats retain SendPan/SendMute curves and
+the original audible bus output, while outside material and static routing remain unchanged.
+Native and bundled strict Copy reopen with the copied curves and the same stereo PCM. Strip Mute,
+main Pan, SendLevel and Plugin controls retain their existing block timing; this bounded send
+consumer coverage remains separate from full automation and incumbent-fidelity acceptance.
 
 Required `cargo xtask ci` was attempted before every merge. The first checkpoints stopped at
 the video-codec Clippy error. An equivalent Mp3 match guard now removes that error, and the
 combined native workspace passes all-target Clippy with warnings denied. Required CI attempts
-are stopped after Clippy and before broad native installed-plugin inventory tests, which can
-wait for licensing interaction on this workstation. Full workspace tests and a complete CI pass
+are stopped after Clippy and before broad native installed-plugin inventory tests. An earlier
+installed VST3 scan stalled and emitted a PACE diagnostic; the exact plugin or blocking condition
+was not confirmed. Full workspace tests and a complete CI pass
 remain unverified. Scoped synthetic tests plus separate format, assets, layers and WASM checks
 are recorded in the local evidence; physical-device acceptance remains separate.
 
@@ -71,6 +79,7 @@ a stale runner can check the previous checkout even when Cargo is invoked from t
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added Send/Repeat/strict Copy curve and audible-output regressions; qualified timing and installed-plugin evidence |
 | 2026-10-12 | minor | Added bounded selection Repeat and copied-metadata Copy/Track/Heal interaction coverage; estimates unchanged |
 | 2026-10-12 | minor | Recorded verified video lint maintenance, the native-test runtime boundary and required DCO signoffs |
 | 2026-10-12 | minor | Added safe audio Heal integration and cross-feature Copy/Track Bounce identity, output and no-op preview regressions |

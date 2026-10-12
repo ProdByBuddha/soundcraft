@@ -25,6 +25,10 @@ The mixer suite covers requested chunks 1, 37, 64, 100, 512 and 1024 plus irregu
 
 These are independent SoundCraft references; no proprietary PCM, code, binary, artwork or manual prose is included. Touched-crate checks, full CI attempts and platform limits are reported in the external task evidence, separately from source coverage. No UI pixels or new command IDs were needed.
 
+## Combined fork validation
+
+Whole mono arrangement Repeat with Automation Follows Edit retains the captured SendPan/SendMute curve and audible stereo bus output. The combined regression preserves outside clips/PCM, static send/bus/Aux routing and selection, adds one Undo, and reopens native/bundled strict Copy with the same copied curves and PCM across different chunk sizes. Exports preserve the original document Arc, revision, dirty state, history, macro journal, clipboard and path. This synthetic interaction does not expand the bounded route/layout or platform scope.
+
 ## Full acceptance residuals
 
 | AutoParam family | Remaining requirement |
@@ -49,4 +53,5 @@ Behavior was paraphrased from the existing 2026.4 Reference Guide corpus: physic
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added combined Repeat/strict Copy audible-curve regression and retained timing/runtime limits |
 | 2026-10-12 | minor | Added bounded send pan/mute consumers with explicit precedence, malformed-lane and suspension policy; full MX11 acceptance remains open |
