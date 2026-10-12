@@ -122,6 +122,8 @@ mutated and truncated movies. Field reports from the first public week are track
 
 ## Progress log
 
+- **2026-10-12 (ED-56, partial):** [Selection repeat](docs/selection-repeat.md) shares immutable Duplicate/Repeat/Extend planning: silent-gap replacement, aggregate Shuffle ripple, Automation Follows Edit, boundary curves and exact clip metadata copies. Unsupported musical-width and partial-processing transformations remain explicit refusals; stage and estimates are unchanged.
+
 - **2026-10-12 (combined fork workflows):** recording allocation reaches native take planning; Commit retains supported exact channel layouts; recovery isolates each document and validates reused bytes; Float32 files retain finite headroom; single-track names validate their stored form; Bounce Mix selects an independent delivery rate. These combine with the relink and batch naming workflows below. Physical-volume tests, broader Commit/delivery policies, recovery controls and independent fidelity checks remain. No readiness or hours remeasurement. See [fork-integration.md](docs/fork-integration.md).
 - **2026-10-12 (audio relink):** Session Audio Health offers user-selected relinking of missing audio with exact decoded PCM identity and metadata checks. Legacy sessions require explicit confirmation when no identity exists. Commands preserve source IDs, clips, timing and alternate takes, support undo/redo and save/reopen, and never open programmatic dialogs. Saved-file identities reflect the actual WAV PCM; autosave byte checks preserve earlier recordings. Automatic searches, batch relinking, video and interchange relinking remain out of scope. No readiness percentage change. See [media-relink.md](docs/media-relink.md).
 - **2026-10-12 (batch track naming):** selected tracks support literal replacement, end trimming, prefix/suffix text and decimal numbering with an old/new preview, atomic collision checks and one Undo. Edit, Mix and Track List context entries plus the manual shortcut are available. Advanced controls and clip/file naming remain; no readiness percentage or hours estimate change. See [batch-track-rename.md](docs/batch-track-rename.md).
@@ -149,6 +151,7 @@ Integrated workflow details and remaining validation: [fork integration](docs/fo
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
 | 2026-10-12 | minor | Combined recording allocation, exact Commit layouts, isolated recovery, PCM-validated relink, Float32 preservation, stored/batch track names and Bounce Mix delivery rate; estimates unchanged |
 | 2026-10-12 | minor | Added user-selected missing-audio relink; G-16 remains open for broader session management |
 | 2026-10-12 | minor | Added bounded batch track naming; advanced manual controls remain, estimates unchanged |
