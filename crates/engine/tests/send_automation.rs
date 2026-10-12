@@ -125,9 +125,10 @@ fn repeated_send_curves_preserve_outside_routing_and_strict_copy_pcm() {
             let _ = std::fs::remove_dir_all(&self.0);
         }
     }
-    let temp = Temp(std::env::temp_dir().join(format!("soundcraft-repeat-send-copy-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&temp.0);
-    std::fs::create_dir_all(&temp.0).unwrap();
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let temp_path = std::env::temp_dir().join(format!("soundcraft-repeat-send-copy-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&temp_path).unwrap();
+    let temp = Temp(temp_path);
     let mut e = fixture();
     let track = e.session().tracks.iter().find(|t| t.name == "Original").unwrap().id;
     let source = e.session().sources[0].id;
