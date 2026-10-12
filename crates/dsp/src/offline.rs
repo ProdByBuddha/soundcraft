@@ -229,6 +229,26 @@ pub fn resample(ch: &[Vec<f32>], from: u32, to: u32) -> Vec<Vec<f32>> {
         .collect()
 }
 
+/// Windowed-sinc conversion to a caller-planned, nearest-frame delivery length. Rejects invalid
+/// rates/shapes and output allocations over [`MAX_OFFLINE_SAMPLES`] summed over channels;
+/// unlike [`resample`], it never silently caps the caller's requested delivery.
+pub fn resample_to_frames(ch: &[Vec<f32>], from: u32, to: u32, frames: usize) -> Result<Vec<Vec<f32>>, &'static str> {
+    if !(8_000..=768_000).contains(&from) || !(8_000..=768_000).contains(&to) {
+        return Err("sample rates must be within 8000..768000 Hz");
+    }
+    let length = ch.first().map_or(0, Vec::len);
+    if ch.is_empty() || ch.len() > crate::util::MAX_CHANNELS || length == 0 || ch.iter().any(|c| c.len() != length) {
+        return Err("conversion requires nonempty, equal-length channels within the channel limit");
+    }
+    if frames == 0 || frames.checked_mul(ch.len()).is_none_or(|n| n > MAX_OFFLINE_SAMPLES) {
+        return Err("conversion output exceeds the offline sample allocation limit or is empty");
+    }
+    if from == to {
+        return if frames == length { Ok(ch.to_vec()) } else { Err("equal-rate conversion must retain its frame count") };
+    }
+    Ok(resample_ratio(ch, f64::from(to) / f64::from(from), frames))
+}
+
 // ---------------------------------------------------------------------------------------------
 // Time stretch (WSOLA) and pitch shift
 

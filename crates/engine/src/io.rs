@@ -4,7 +4,7 @@ use crate::{Engine, EngineError, Result};
 use serde_json::{Value, json};
 use soundcraft_audio_io::{AudioBuffer, EncodeOptions, FileFormat};
 use soundcraft_model::{BusId, ChannelFormat, Clip, ClipContent, Session, Source, SourceAudio, SourceId, TrackId, TrackKind};
-use soundcraft_time::{Range, Samples};
+use soundcraft_time::{Range, SampleRate, Samples};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -258,23 +258,115 @@ pub fn bounce_source(
     fold_stereo: bool,
     bus: Option<BusId>,
 ) -> Result<(Vec<u8>, (f32, f32, f32))> {
+    let output = bounce_source_at_rate(e, r, opts, normalize, fold_stereo, bus, e.session().sample_rate)?;
+    Ok((output.bytes, output.stats))
+}
+
+/// Encoded delivery and measurements of its final, output-rate signal.
+#[derive(Debug)]
+pub struct BounceOutput {
+    pub bytes: Vec<u8>,
+    /// Peak dBFS, integrated LUFS, and true peak dBFS before final quantization.
+    pub stats: (f32, f32, f32),
+    pub sample_rate: SampleRate,
+    pub frames: usize,
+}
+
+/// Render and process at the session rate, then convert once before normalization, metering,
+/// and final encoding. The session and its source audio remain unchanged.
+pub fn bounce_source_at_rate(
+    e: &Engine,
+    r: Range,
+    opts: &EncodeOptions,
+    normalize: bool,
+    fold_stereo: bool,
+    bus: Option<BusId>,
+    sample_rate: SampleRate,
+) -> Result<BounceOutput> {
     let s = e.session();
-    if r.len() > s.sample_rate.samples(4.0 * 3600.0) {
-        return Err(EngineError::BadParams("file.bounce_mix".into(), "bounces are limited to 4 hours".into()));
-    }
+    let (source_frames, frames, channels) = bounce_plan(s, r, fold_stereo, bus, sample_rate)?;
     let (mut ch, fmt) = render_bounce(s, r, fold_stereo, bus);
+    let shape_ok = |ch: &[Vec<f32>], frames| ch.len() == channels && ch.iter().all(|c| c.len() == frames);
+    if !shape_ok(&ch, source_frames) {
+        return Err(bounce_error("renderer did not deliver the complete requested channel/frame shape"));
+    }
+    if sample_rate != s.sample_rate {
+        ch = soundcraft_dsp::offline::resample_to_frames(&ch, s.sample_rate.hz(), sample_rate.hz(), frames).map_err(bounce_error)?;
+        if !shape_ok(&ch, frames) {
+            return Err(bounce_error("sample-rate conversion did not deliver the complete requested channel/frame shape"));
+        }
+    }
     if normalize {
         soundcraft_dsp::offline::normalize(&mut ch, -0.1, false);
     }
     let peak = soundcraft_dsp::offline::peak_db(&ch);
-    let mut lm = soundcraft_dsp::meter::LoudnessMeter::new(s.sample_rate.as_f64() as f32, ch.len());
-    let frames = ch.first().map_or(0, Vec::len);
+    let mut lm = soundcraft_dsp::meter::LoudnessMeter::new(sample_rate.as_f64() as f32, ch.len());
     lm.process(&ch, frames);
     let lufs = lm.integrated_lufs();
     let true_peak = lm.true_peak_db();
-    let buf = AudioBuffer { sample_rate: s.sample_rate.hz(), channels: ch };
+    let buf = AudioBuffer { sample_rate: sample_rate.hz(), channels: ch };
     let bytes = soundcraft_audio_io::encode_with_channel_mask(&buf, opts, fmt.channel_mask()).map_err(|err| EngineError::Io(err.to_string()))?;
-    Ok((bytes, (peak, lufs, true_peak)))
+    Ok(BounceOutput { bytes, stats: (peak, lufs, true_peak), sample_rate, frames })
+}
+
+fn bounce_error(message: &str) -> EngineError {
+    EngineError::BadParams("file.bounce_mix".into(), message.into())
+}
+
+/// Bound whole planar buffers before even probing plugins. This does not include the shared
+/// renderer's plugin latency/tail workspaces, which have their own rendering concerns.
+fn bounce_plan(s: &Session, r: Range, fold: bool, bus: Option<BusId>, rate: SampleRate) -> Result<(usize, usize, usize)> {
+    // Session deserialization can supply the private rate wrapper without calling its constructor.
+    if SampleRate::new(s.sample_rate.hz()).is_err() || SampleRate::new(rate.hz()).is_err() {
+        return Err(bounce_error("session and delivery sample rates must be within 8000..768000 Hz"));
+    }
+    let length =
+        r.end.checked_sub(r.start).filter(|len| *len > 0).ok_or_else(|| bounce_error("bounce range must have a positive, non-overflowing length"))?;
+    if length > s.sample_rate.samples(4.0 * 3600.0) {
+        return Err(bounce_error("bounces are limited to 4 hours"));
+    }
+    let render_channels = match bus {
+        Some(id) => s.bus(id).ok_or_else(|| bounce_error("unknown bounce bus"))?.format.channels(),
+        None => {
+            if s.outputs.first().is_some_and(|output| output.format.channels() > soundcraft_mix::MAX_CHANNELS) {
+                return Err(bounce_error("bounce rendering supports at most 16 channels"));
+            }
+            soundcraft_mix::main_channels(s)
+        }
+    };
+    if !(1..=soundcraft_mix::MAX_CHANNELS).contains(&render_channels) {
+        return Err(bounce_error("bounce rendering supports at most 16 channels"));
+    }
+    let source_frames = usize::try_from(length).map_err(|_| bounce_error("bounce source length exceeds platform limits"))?;
+    let channels = if fold && render_channels > 2 { 2 } else { render_channels };
+    // Integer round-to-nearest (half upward), not a saturated float cast. u128 keeps every
+    // input-rate/output-rate product exact on native and WASM platforms.
+    let numerator = (source_frames as u128)
+        .checked_mul(u128::from(rate.hz()))
+        .and_then(|n| n.checked_add(u128::from(s.sample_rate.hz() / 2)))
+        .ok_or_else(|| bounce_error("bounce conversion length overflow"))?;
+    let frames =
+        usize::try_from(numerator / u128::from(s.sample_rate.hz())).map_err(|_| bounce_error("bounce output length exceeds platform limits"))?;
+    if frames == 0 {
+        return Err(bounce_error("bounce converts to zero output frames; select a longer range"));
+    }
+    if rate != s.sample_rate && frames.checked_mul(channels).is_none_or(|n| n > soundcraft_dsp::offline::MAX_OFFLINE_SAMPLES) {
+        return Err(bounce_error("bounce exceeds the sample-rate conversion allocation limit"));
+    }
+    let cap = soundcraft_mix::MAX_RENDER_SAMPLES;
+    let samples = |frames: usize, channels: usize| {
+        frames.checked_mul(channels).filter(|n| *n <= cap).ok_or_else(|| bounce_error("bounce exceeds the offline buffer allocation limit"))
+    };
+    // The renderer uses at least a stereo working path, including mono bus delivery.
+    let rendered = samples(source_frames, render_channels.max(2))?;
+    let delivered = samples(frames, channels)?;
+    let folded = if channels != render_channels { samples(source_frames, channels)? } else { 0 };
+    let render_live = rendered.checked_add(folded);
+    let conversion_live = if rate != s.sample_rate { samples(source_frames, channels)?.checked_add(delivered) } else { Some(delivered) };
+    if render_live.is_none_or(|n| n > cap) || conversion_live.is_none_or(|n| n > cap) {
+        return Err(bounce_error("bounce exceeds the offline buffer allocation limit"));
+    }
+    Ok((source_frames, frames, channels))
 }
 
 /// The main mix over `r` and its format (folded to stereo on request).
