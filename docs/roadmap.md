@@ -101,10 +101,13 @@ There is no `cargo xtask scorecard` in this repo; the measured number is `cargo 
 
 Integrated workflow details and remaining validation: [fork integration](fork-integration.md). Existing percentages and hours remain prior estimates.
 
+ED-56 arrangement correctness progress: [selection repeat](selection-repeat.md) covers bounded master-view duplication, repeated automation and Shuffle ripple. Musical remapping and advanced fragments remain; milestone completion and estimates are unchanged.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
 | 2026-10-12 | minor | Recorded bounded safe audio Heal and its residual processing/workflow scope; estimates unchanged |
 | 2026-10-12 | minor | Recorded eight combined workflows and their residual checks without changing stage or estimates |
 | 2026-10-12 | minor | Recorded bounded manual audio relink progress without changing stage/readiness estimates |

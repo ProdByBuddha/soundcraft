@@ -94,6 +94,8 @@ launch #142; Linux #45, #107.
   contributor found seven in one sitting (#116–#122).
 - **Estimate:** ≈ 25–40 h at 0.5–1.5 h each, plus review of the open PRs.
 
+**ED-56 remains partial.** [Bounded selection repeat](selection-repeat.md) addresses arrangement automation, copied silence, Shuffle and metadata identity. Fractional/variable-tempo material mapping, automation-only views, note-only MIDI and processed fragments remain; this does not close G-04 or change its estimate.
+
 ### G-05. Plugin hosting on macOS
 
 - **Missing:** the `com.apple.security.cs.disable-library-validation` entitlement in the signed
@@ -218,6 +220,7 @@ Remaining: Aux/Master and hosted processing, latency-producing effects, real-tim
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
 | 2026-10-12 | minor | Narrowed G-04 with safe unprocessed audio Heal; advanced Heal and shortcut residuals remain |
 | 2026-10-12 | minor | Narrowed native recording allocation and session management gaps; physical-volume, source-streaming and advanced workflow checks remain |
 | 2026-10-12 | minor | Narrowed G-16: manual audio relink added; automatic/batch searches and broader session management remain |

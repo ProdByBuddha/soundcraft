@@ -15,6 +15,7 @@ pub mod inspect;
 pub mod io;
 pub mod media;
 pub mod score;
+mod selection_repeat;
 pub mod session_copy;
 
 use serde_json::{Value, json};

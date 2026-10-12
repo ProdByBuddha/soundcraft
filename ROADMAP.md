@@ -122,6 +122,7 @@ mutated and truncated movies. Field reports from the first public week are track
 
 ## Progress log
 
+- **2026-10-12 (ED-56, partial):** [Selection repeat](docs/selection-repeat.md) shares immutable Duplicate/Repeat/Extend planning: silent-gap replacement, aggregate Shuffle ripple, Automation Follows Edit, boundary curves and exact clip metadata copies. Unsupported musical-width and partial-processing transformations remain explicit refusals; stage and estimates are unchanged.
 - **2026-10-12 (CI maintenance):** an equivalent video Mp3 match guard removes the Rust 1.95 Clippy stop. The combined native workspace passes all-target Clippy with warnings denied. Required CI attempts stop before broad installed-plugin test runtime; full workspace tests and complete CI remain unverified. Scoped source acceptance and device/plugin runtime remain separate. See [fork-integration.md](docs/fork-integration.md). No stage/readiness/hours change.
 - **2026-10-12 (safe audio Heal):** ordinary contiguous unprocessed audio splits merge without changing their samples, with selection remapping and one Undo. Unsupported fades, envelopes, effects, stretch, locks/groups and per-ID processing history return structured skipped reasons; no-op commands preserve document/history state. Advanced Heal and removed-silence restoration remain open; no stage/readiness/hours change. See [heal-safety.md](docs/heal-safety.md).
 - **2026-10-12 (combined fork workflows):** recording allocation reaches native take planning; Commit retains supported exact channel layouts; recovery isolates each document and validates reused bytes; Float32 files retain finite headroom; single-track names validate their stored form; Bounce Mix selects an independent delivery rate. These combine with the relink and batch naming workflows below. Physical-volume tests, broader Commit/delivery policies, recovery controls and independent fidelity checks remain. No readiness or hours remeasurement. See [fork-integration.md](docs/fork-integration.md).
@@ -152,6 +153,7 @@ Integrated workflow details and remaining validation: [fork integration](docs/fo
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
 | 2026-10-12 | minor | Video lint maintenance passes combined workspace Clippy; full CI/native-plugin runtime remains unverified |
 | 2026-10-12 | minor | Bounded audio Heal preserves unprocessed material and refuses unsupported clip semantics; estimates unchanged |
 | 2026-10-12 | minor | Combined recording allocation, exact Commit layouts, isolated recovery, PCM-validated relink, Float32 preservation, stored/batch track names and Bounce Mix delivery rate; estimates unchanged |

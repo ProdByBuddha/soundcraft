@@ -178,7 +178,7 @@ Weights by what Pro Tools users actually spend time on. **Breadth** = the featur
 | Area | Weight | Breadth | Ready | Remaining (h) | What's there / what's missing |
 |---|---:|---:|---:|---:|---|
 | Recording and monitoring | 12 % | 75 % | **40 %** | 40–60 | Punch in/out, QuickPunch-style punch on the fly, pre/post-roll, loop record into playlists, input monitoring through the strip, autosave/recovery. Missing: input/output device choice, buffer size, duplex low-latency path, physical-volume disk-recording acceptance, per-channel hardware input routing, TrackPunch/destructive punch beyond flags, monitoring opt-out (#42) |
-| Editing | 15 % | 92 % | **65 %** | 40–60 | Slip/Shuffle/Spot/Grid, every Edit menu command, fades/crossfades, playlists and comping, clip groups, nudge, Tab to transient, separate/heal/consolidate/strip silence. [Heal safety](heal-safety.md) covers unprocessed contiguous audio; advanced processing and silence restoration remain. Open bugs: #3, #5 (Multitool handles), #140 (Heal shortcut), #86, #91, #92; no batch fade presets, no field-recorder workflows |
+| Editing | 15 % | 92 % | **65 %** | 40–60 | Slip/Shuffle/Spot/Grid, every Edit menu command, [bounded selection repeat](selection-repeat.md) with musical/fragment residuals, fades/crossfades, playlists and comping, clip groups, nudge, Tab to transient, separate/heal/consolidate/strip silence. [Heal safety](heal-safety.md) covers unprocessed contiguous audio; advanced processing and silence restoration remain. Open bugs: #3, #5 (Multitool handles), #140 (Heal shortcut), #86, #91, #92; no batch fade presets, no field-recorder workflows |
 | Mixing and routing | 12 % | 85 % | **60 %** | 35–50 | Faders, pan, sends, busses, aux, masters, VCAs, folders, 10 inserts, PDC, solo modes, I/O Setup. Missing: sidechain inputs, hardware-channel I/O mapping, bus/AFL/PFL paths verified, HEAT; bugs #59, #103 |
 | Automation | 7 % | 80 % | **55 %** | 20–30 | Lanes for volume/pan/mute/sends/plugin params, trim, Write/Touch/Latch, glide/thin/coalesce. Missing: surround-pan and object automation, Touch/Latch prime and preview modes, automation on control surfaces; bug #104 |
 | Built-in plugins and AudioSuite | 8 % | 40 % | **35 %** | 80–120 | 26 processors + 2 instruments covering every AudioSuite category; Pro Tools bundles roughly three times as many plugins plus virtual instruments. No fidelity comparison, generic parameter UIs (#139). See [plugin-parity.md](plugin-parity.md) |
@@ -249,6 +249,7 @@ Integrated workflow details and remaining validation: [fork integration](fork-in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
 | 2026-10-12 | minor | Recorded safe unprocessed audio Heal and explicit advanced residuals without readiness remeasurement |
 | 2026-10-12 | minor | Recorded integrated workflow scope and corrected obsolete RAM-take statements; no readiness remeasurement |
 | 2026-10-12 | minor | Recorded partial SC-MX37 Track Bounce evidence and limits without re-measuring any assessment value |
