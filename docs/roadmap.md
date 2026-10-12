@@ -1,6 +1,6 @@
 # SoundCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Heal, Repeat and bounded send playback; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Heal, Repeat, send playback and native track-name persistence; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Forward-looking plan. Status and numbers: [`../ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the ranked work list: [`gaps.md`](gaps.md).
@@ -10,6 +10,9 @@ G-16 progress (2026-10-12): user-selected missing-audio relinking now validates 
 preserves clip timing and supports undo/redo and persisted sessions. Automatic searches, batch
 relinking and broader session management remain. See [media-relink.md](media-relink.md).
 [Save Copy audio completeness](session-copy.md) now has strict preflight and a read-only media preview. This narrows session-file correctness work; conversion, selected-time export, video and other external-asset portability remain open.
+Single-track stored-name acceptance now passes native command-based rename, occupied-name
+rejection and Save/Open with comments retained by track ID. Dialog/widget behavior and
+folder/output-bus label synchronization remain separate; see [fork integration](fork-integration.md).
 
 G-04 progress (2026-10-12): [Safe audio Heal](heal-safety.md) restores ordinary unprocessed
 audio splits, refuses unsupported clip processing and preserves no-op document/history state.
@@ -109,6 +112,7 @@ ED-56 arrangement correctness progress: [selection repeat](selection-repeat.md) 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Recorded native stored-name/conflict/comment Save/Open acceptance; broader label synchronization and estimates unchanged |
 | 2026-10-12 | minor | Recorded bounded SC-MX11 send pan/mute playback and full automation residuals; estimates unchanged |
 | 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
 | 2026-10-12 | minor | Recorded bounded safe audio Heal and its residual processing/workflow scope; estimates unchanged |

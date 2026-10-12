@@ -1,6 +1,6 @@
 # Fork integration scope
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Send/Repeat playback, verified CI boundary and DCO workflow)
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Send/Repeat playback, native track names, isolated CI and DCO workflow)
 
 ## Fork integration, 2026-10-12
 
@@ -26,7 +26,7 @@ message-only amendment may use an explicit old-head force-with-lease; verify the
 | [Recovery](autosave-recovery.md) | Separate per-open-document directories and exact-byte reuse preserve prior source-ID recordings | Interval/retention controls, asynchronous saving, cleanup and unavailable media |
 | [Manual audio relink](media-relink.md) | PCM identity/metadata checks, explicit legacy consent and document-scoped retry behavior | Automatic/batch search, video/interchange relink and raw file-byte fidelity |
 | [Float32 files](float32-file-preservation.md) | Finite headroom preserved through files, recordings and generated-source persistence | Broader depth/dither choices and delivery analysis |
-| Stored track names | Single rename checks uniqueness after 64-character truncation and returns the stored name | Folder/output-bus label synchronization is a separate workflow |
+| Stored track names | Single rename checks uniqueness after 64-character truncation and returns the stored name; native Save/Open retains exact track IDs, names and multiline Unicode comments after an occupied-name rejection | UI dialogs and folder/output-bus label synchronization are separate workflows |
 | [Batch track naming](batch-track-rename.md) | Literal replace/trim/add/number stages preview and apply atomically with one Undo | Advanced transforms, presets, clip/file naming and Score/MIDI context entries |
 | [Track Bounce files](track-bounce-files.md) | Immutable selected Audio/built-in Instrument export, exact finite Float32 headroom, nonfinite no-delivery policy and source-stop tails | Unix hard-link publication and one-file web subset; hosted/Aux/Master/real-time/Windows paths, rate conversion and further manual options |
 | [Save Session Copy In](session-copy.md) | Complete declared audio, validated references and destinations, actual saved-PCM identities and detached export snapshots preserve the open document | Audio conversion/timing options, original file bytes/BWF, video and external plugin files, whole-copy rollback and browser download retention |
@@ -62,14 +62,26 @@ Native and bundled strict Copy reopen with the copied curves and the same stereo
 main Pan, SendLevel and Plugin controls retain their existing block timing; this bounded send
 consumer coverage remains separate from full automation and incumbent-fidelity acceptance.
 
-Required `cargo xtask ci` was attempted before every merge. The first checkpoints stopped at
-the video-codec Clippy error. An equivalent Mp3 match guard now removes that error, and the
-combined native workspace passes all-target Clippy with warnings denied. Required CI attempts
-are stopped after Clippy and before broad native installed-plugin inventory tests. An earlier
-installed VST3 scan stalled and emitted a PACE diagnostic; the exact plugin or blocking condition
-was not confirmed. Full workspace tests and a complete CI pass
-remain unverified. Scoped synthetic tests plus separate format, assets, layers and WASM checks
-are recorded in the local evidence; physical-device acceptance remains separate.
+Stored-name acceptance now has a native two-track command regression: distinct comments,
+one trimmed rename, an occupied-name `BadParams` error that preserves document/history state,
+an exercised pending Redo, actual Save and Open in a fresh engine. Exact full Track objects are
+checked by stable ID, with independent name/comment expectations. This verifies headless metadata
+persistence; it does not establish dialog/widget behavior, continuous typing gestures, physical
+removable-volume permissions or broader label synchronization.
+
+Required `cargo xtask ci` was attempted before every merge. Early checkpoints stopped at
+video-codec Clippy; the equivalent Mp3 match guard removed that error. Later attempts stopped
+after Clippy and before broad native plugin inventory. An earlier installed VST3 scan stalled
+and emitted a PACE diagnostic; the exact plugin or blocking condition was not confirmed.
+
+The subsequent [plugin-isolation checkpoint](plugin-test-isolation.md) completed all six gates,
+including the unfiltered workspace tests, with exclusive empty automatic CLAP/VST3 roots and
+Apple-only Audio Unit discovery applied before enumeration. Actual module-load observations
+include owned CLAP/VST3 fixtures and Apple CoreAudio, with no external installed-plugin paths.
+Fixture processing/state/editor/shutdown coverage remains; optional installed-plugin smoke is
+separate. This verifies the published isolated-CI checkpoint, not external plugin compatibility,
+physical devices, other platforms or Pro Tools fidelity. Its runner, host binaries and fixture
+builds were checked against their current source root; earlier boundary logs remain historical evidence.
 
 When transferring a build cache between checkouts, verify the `xtask` runner's compiled repository
 root and rebuild that runner from the current checkout if needed. Its root is fixed at compilation;
@@ -79,6 +91,8 @@ a stale runner can check the previous checkout even when Cargo is invoked from t
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Added native stored-name/conflict/comment Save/Open acceptance without changing broader label-sync or runtime limits |
+| 2026-10-12 | minor | Recorded the published full isolated-CI pass, observed controlled module loads and retained external acceptance limits |
 | 2026-10-12 | minor | Added Send/Repeat/strict Copy curve and audible-output regressions; qualified timing and installed-plugin evidence |
 | 2026-10-12 | minor | Added bounded selection Repeat and copied-metadata Copy/Track/Heal interaction coverage; estimates unchanged |
 | 2026-10-12 | minor | Recorded verified video lint maintenance, the native-test runtime boundary and required DCO signoffs |

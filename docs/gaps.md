@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Heal, Repeat and bounded send playback; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Heal, Repeat, send playback and native track-name persistence; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -180,6 +180,9 @@ undo/redo and save/reopen ([media-relink.md](media-relink.md)). Video and interc
 [Batch track naming](batch-track-rename.md) supports literal replacement, end trimming,
 prefix/suffix text and decimal numbering with preview, atomic collision checks and one Undo.
 Regex, range/middle transforms, alphabetic numbering, presets and clip/file batch naming remain.
+Single-track rename/conflict/comment ownership now passes actual native Save/Open with two
+distinct tracks and multiline Unicode comments. UI dialog acceptance and folder/output-bus
+label synchronization remain separate ([fork integration](fork-integration.md)).
 No readiness or remaining-hours remeasurement was performed. ≈ 25–40 h (existing estimate).
 
 ### G-17. Video and post
@@ -222,6 +225,7 @@ Remaining: Aux/Master and hosted processing, latency-producing effects, real-tim
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Verified native stored-name/conflict/comment persistence; broader G-16 and label-sync scope remain |
 | 2026-10-12 | minor | Recorded bounded SC-MX11 send pan/mute playback and full automation residuals; estimates unchanged |
 | 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
 | 2026-10-12 | minor | Narrowed G-04 with safe unprocessed audio Heal; advanced Heal and shortcut residuals remain |
