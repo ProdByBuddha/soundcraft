@@ -12,7 +12,7 @@ use soundcraft_time::Samples;
 pub enum Dialog {
     NewTracks { count: u32, format: String, kind: String, timebase: String, name: String },
     NewSession { name: String, sample_rate: u32, demo: bool },
-    Bounce { path: String, format: String, bit_depth: String, normalize: bool },
+    Bounce { path: String, format: String, bit_depth: String, sample_rate: u32, normalize: bool },
     RenameTrack { id: TrackId, name: String },
     RenameClip { id: ClipId, name: String },
     ClearClips { clips: Vec<ClipId>, sources: Vec<SourceId>, message: String },
@@ -84,9 +84,13 @@ impl Dialogs {
                 Dialog::NewTracks { count: 1, format: "Mono".into(), kind: "audio".into(), timebase: "samples".into(), name: "Audio".into() }
             }
             "session.new" => Dialog::NewSession { name: "Untitled".into(), sample_rate: 48_000, demo: false },
-            "file.bounce_mix" => {
-                Dialog::Bounce { path: format!("{home}/{name} Bounce.wav"), format: "wav".into(), bit_depth: "24".into(), normalize: false }
-            }
+            "file.bounce_mix" => Dialog::Bounce {
+                path: format!("{home}/{name} Bounce.wav"),
+                format: "wav".into(),
+                bit_depth: "24".into(),
+                sample_rate: e.session().sample_rate.hz(),
+                normalize: false,
+            },
             "file.import_audio" => Dialog::PathPrompt { cmd: id.into(), title: "Import Audio".into(), path: home, key: "path".into() },
             "file.import_midi" => Dialog::PathPrompt { cmd: id.into(), title: "Import MIDI".into(), path: home, key: "path".into() },
             "session.open" => Dialog::PathPrompt { cmd: id.into(), title: "Open Session".into(), path: home, key: "path".into() },
@@ -336,7 +340,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
                         ));
                     }
                 }
-                Dialog::Bounce { path, format, bit_depth, normalize } => {
+                Dialog::Bounce { path, format, bit_depth, sample_rate, normalize } => {
                     ui.horizontal(|ui| {
                         ui.label("File");
                         ui.add(egui::TextEdit::singleline(path).desired_width(360.0));
@@ -353,6 +357,17 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
                             }
                         });
                     });
+                    ui.horizontal(|ui| {
+                        let label = ui.label("Sample Rate");
+                        let presets = egui::ComboBox::from_id_salt("bounce_sample_rate").selected_text(format!("{sample_rate} Hz")).show_ui(ui, |ui| {
+                            for rate in soundcraft_time::SampleRate::COMMON {
+                                ui.selectable_value(sample_rate, rate, format!("{rate} Hz"));
+                            }
+                        });
+                        presets.response.labelled_by(label.id);
+                        let custom = ui.label("Custom");
+                        ui.add(egui::DragValue::new(sample_rate).range(8_000..=768_000).suffix(" Hz")).labelled_by(custom.id);
+                    });
                     ui.checkbox(normalize, "Normalize to -0.1 dBFS");
                     ui.label(
                         egui::RichText::new("Bounces the edit selection, or the whole session when nothing is selected.")
@@ -363,7 +378,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
                         let p = std::path::Path::new(path.as_str()).with_extension(if format == "aiff" { "aif" } else { format.as_str() });
                         action = Some((
                             "file.bounce_mix".into(),
-                            json!({"path": p.to_string_lossy(), "format": format, "bit_depth": bit_depth, "normalize": normalize}),
+                            json!({"path": p.to_string_lossy(), "format": format, "bit_depth": bit_depth, "sample_rate": sample_rate, "normalize": normalize}),
                         ));
                     }
                 }
