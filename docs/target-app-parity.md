@@ -1,6 +1,6 @@
 # Target-app parity: SoundCraft vs Avid Pro Tools
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Heal, Repeat and bounded send playback; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1 (bundle 26.4.1.179, macOS)
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Master post-fader reference acceptance added to combined workflows; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1 (bundle 26.4.1.179, macOS)
 
 The authoritative assessment of how close SoundCraft is to Pro Tools. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it, [`gaps.md`](gaps.md) itemizes every shortfall, and the per-dimension docs go deeper:
@@ -245,10 +245,13 @@ serializes more, because it needs hands-on testing.
 
 Integrated workflow details and remaining validation: [fork integration](fork-integration.md). Existing percentages and hours remain prior estimates.
 
+SC-MX02 [Master post-fader insert order](master-post-fader.md) has native acceptance evidence from eight Mix and three Engine tests with independent nonlinear PCM, an audible wrong-order contrast and command/native persistence. Broader Master routing/PDC, hosted/hardware processing, dither fidelity and complete SC-MX11 automation remain separate. No readiness or hours value was remeasured.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Recorded SC-MX02 Master post-fader independent nonlinear reference acceptance without readiness remeasurement |
 | 2026-10-12 | minor | Recorded bounded SC-MX11 send pan/mute playback and full automation residuals; estimates unchanged |
 | 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
 | 2026-10-12 | minor | Recorded safe unprocessed audio Heal and explicit advanced residuals without readiness remeasurement |
