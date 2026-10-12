@@ -33,7 +33,7 @@ Files are encoded to exclusive staging files in the destination directory, flush
 
 Web supports one named file using the existing browser download hook; directories/batches are rejected. Web preview checks format/source/range policy, not browser filesystem existence or native publication guarantees. Non-Unix native publication, including Windows, is explicitly unsupported before rendering or writing.
 
-WAV and AIFF support 16-bit/24-bit integer and 32-bit float. FLAC supports 16/24-bit integer, up to eight channels and 655350 Hz. Rendering remains at session sample rate (8000–768000 Hz supported); no new sample-rate conversion or quality control is claimed. Integer dither is optional, ignored for float. WAV writes the declared layout channel mask. Existing float codec headroom policy is unchanged; this feature does not claim preservation of over-range float samples.
+WAV and AIFF support 16-bit/24-bit integer and 32-bit float. FLAC supports 16/24-bit integer, up to eight channels and 655350 Hz. Rendering remains at session sample rate (8000–768000 Hz supported); no new sample-rate conversion or quality control is claimed. Integer dither is optional, ignored for float. WAV writes the declared layout channel mask. In the integrated fork, Float32 WAV/AIFF delivery retains finite 1.25/−2.5 headroom exactly through decoding. Track Bounce rejects nonfinite rendered PCM before delivering any file; it does not invoke the codec’s nonfinite sanitization policy. Both outcomes retain the original source PCM, saved identity and session state.
 
 ## Bounded policy
 
@@ -59,8 +59,9 @@ Use the same parameters with `track.bounce_preview` for a metadata-only manifest
 
 ## Remaining manual options
 
-Aux/Master sources, hosted/licensed processing, real-time/hardware paths, multiple output paths, Windows native delivery, dual-mono/multi-mono grouping, sample-rate conversion/quality, other file/container formats, prefix/suffix and preset workflows, import-after-bounce, automatic Bounce Files placement, and progress/cancellation remain outside this implementation. Audio effect prehistory and latency-producing effects remain unresolved. Existing downstream matrix behavior, float codec headroom and voice stealing are shared SoundCraft behavior, not Pro Tools equivalence evidence.
+Aux/Master sources, hosted/licensed processing, real-time/hardware paths, multiple output paths, Windows native delivery, dual-mono/multi-mono grouping, sample-rate conversion/quality, other file/container formats, prefix/suffix and preset workflows, import-after-bounce, automatic Bounce Files placement, and progress/cancellation remain outside this implementation. Audio effect prehistory and latency-producing effects remain unresolved. Existing downstream matrix behavior and voice stealing are shared SoundCraft behavior, not Pro Tools equivalence evidence.
 
 ## Revision history
 
+- 2026-10-12: Integrated with Float32 preservation, Mix delivery rate, exact Commit layouts and the combined dialog host. Verified finite WAV/AIFF headroom, nonfinite no-delivery behavior and unchanged subsequent Mix/Commit rendering.
 - 2026-10-12: Defined separate immutable Track Bounce file delivery, supported source/routing/range/format policy, preview/revision gate, safety limits and explicit residuals.

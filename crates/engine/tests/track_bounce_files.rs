@@ -47,6 +47,95 @@ fn export(e: &mut Engine, t: TrackId, path: &Path, more: Value) -> Value {
 }
 
 #[test]
+fn float_delivery_preserves_headroom_without_editing_sources_or_history() {
+    let temp = Temp::new();
+    let mut s = Session::default();
+    let t = s.add_track(TrackKind::Audio, ChannelFormat::Stereo, Some("Headroom"));
+    let channels = vec![vec![1.25; 1500], vec![-2.5; 1500]];
+    let src = io::add_source(&mut s, "Headroom", AudioBuffer { sample_rate: 48_000, channels: channels.clone() }, None, FileFormat::Wav);
+    let id = s.new_clip_id();
+    let tr = s.track_mut(t).unwrap();
+    tr.playlist_mut().unwrap().clips.push(Clip::audio(id, "Headroom", src, 0, 0, 1500));
+    tr.mixer.volume_db = -6.0;
+    let mut e = Engine::new(s);
+    let before = e.session_arc();
+    let revision = e.revision;
+    let journal = e.journal.clone();
+    let undo = e.undo_history();
+    let source_identity = e.session().sources[0].audio_identity.clone();
+    for (format, ext) in [("wav", "wav"), ("aiff", "aif")] {
+        let path = temp.0.join(format!("headroom.{ext}"));
+        export(&mut e, t, &path, json!({"format": format, "render_volume": false}));
+        let (info, audio) = decoded(&path);
+        assert_eq!(info.sample_rate, 48_000);
+        assert_eq!(audio.channels, channels);
+        assert!(Arc::ptr_eq(&before, &e.session_arc()));
+        assert_eq!(e.session().pool.get(src).unwrap().buffer.channels, channels);
+        assert_eq!(e.session().sources[0].audio_identity, source_identity);
+        assert_eq!(e.revision, revision);
+        assert_eq!(e.journal, journal);
+        assert_eq!(e.undo_history(), undo);
+        assert!(!e.is_dirty());
+    }
+}
+
+#[test]
+fn nonfinite_track_render_delivers_nothing_and_keeps_original_pcm_and_state() {
+    let temp = Temp::new();
+    for (n, sample) in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY].into_iter().enumerate() {
+        let mut s = Session::default();
+        let t = s.add_track(TrackKind::Audio, ChannelFormat::Mono, Some("Nonfinite"));
+        let mut channel = vec![1.25; 128];
+        channel[64] = sample;
+        let src = io::add_source(&mut s, "Nonfinite", AudioBuffer { sample_rate: 48_000, channels: vec![channel] }, None, FileFormat::Wav);
+        let id = s.new_clip_id();
+        s.track_mut(t).unwrap().playlist_mut().unwrap().clips.push(Clip::audio(id, "Nonfinite", src, 0, 0, 128));
+        let mut e = Engine::new(s);
+        let before = e.session_arc();
+        let revision = e.revision;
+        let path = temp.0.join(format!("nonfinite-{n}.wav"));
+        let err = e.execute("track.bounce", &json!({"tracks":[t],"path":path,"render_pan":false,"bit_depth":"32f"})).unwrap_err();
+        assert!(err.to_string().contains("nonfinite audio"), "{err}");
+        assert!(!path.exists());
+        assert_eq!(std::fs::read_dir(&temp.0).unwrap().count(), 0, "no staging or output survives render rejection");
+        assert!(Arc::ptr_eq(&before, &e.session_arc()));
+        assert_eq!(e.session().pool.get(src).unwrap().buffer.channels[0][64].to_bits(), sample.to_bits());
+        assert_eq!(e.revision, revision);
+        assert!(e.journal.is_empty());
+        assert!(!e.can_undo());
+        assert!(!e.is_dirty());
+    }
+}
+
+#[test]
+fn source_stop_and_volume_bypass_do_not_change_later_mix_or_commit_rendering() {
+    let temp = Temp::new();
+    let mut s = Session::default();
+    let t = audio(&mut s, ChannelFormat::Stereo, "Shared strip", 3200);
+    let tr = s.track_mut(t).unwrap();
+    tr.mixer.volume_db = -6.0;
+    tr.mixer.inserts[0] = Some(Insert::new("invert"));
+    let mut e = Engine::new(s);
+    let range = Range::new(0, 3200);
+    let before = soundcraft_mix::render_range(e.session(), range, 1024);
+    let path = temp.0.join("selection-tail.wav");
+    export(&mut e, t, &path, json!({"start":0,"end":1500,"tail_seconds":0.001,"render_volume":false}));
+    let (_, bounced) = decoded(&path);
+    assert_eq!(bounced.frames(), 1548);
+    assert!((bounced.channels[0][1498] + 0.025).abs() < 1e-6);
+    assert!(bounced.channels.iter().all(|c| c[1500..].iter().all(|sample| sample.abs() < 1e-8)));
+    assert_eq!(soundcraft_mix::render_range(e.session(), range, 1024), before);
+    let committed = e.execute("track.commit", &json!({"tracks":[t]})).unwrap();
+    assert_eq!(committed["tracks"].as_array().unwrap().len(), 1);
+    let after = soundcraft_mix::render_range(e.session(), range, 1024);
+    for (actual, expected) in after.iter().flatten().zip(before.iter().flatten()) {
+        assert!((actual - expected).abs() < 1e-6);
+    }
+    assert!(e.undo());
+    assert_eq!(soundcraft_mix::render_range(e.session(), range, 1024), before);
+}
+
+#[test]
 fn all_supported_layouts_keep_channels_mask_frames_and_exact_unpanned_mono() {
     let temp = Temp::new();
     for fmt in ChannelFormat::ALL.into_iter().filter(|f| f.channels() <= 16) {

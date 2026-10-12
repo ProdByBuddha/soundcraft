@@ -98,6 +98,62 @@ fn actual_platform_shortcut_opens_the_track_bounce_dialog() {
     }
 }
 
+#[test]
+fn mix_delivery_rate_and_track_preview_remain_independent_in_the_combined_host() {
+    let mut h = harness();
+    h.state_mut().run("edit.select", json!({"tracks":["Kick"],"start":100,"end":200})).unwrap();
+    menus::invoke_menu(h.state_mut(), "track.bounce", "Track > Bounce...");
+    steps(&mut h);
+    let track_params = params(&h);
+    h.get_by_label("Cancel").click();
+    steps(&mut h);
+    menus::invoke_menu(h.state_mut(), "file.bounce_mix", "File > Bounce Mix...");
+    steps(&mut h);
+    assert!(matches!(h.state().dialogs.open, Some(Dialog::Bounce { sample_rate: 48000, .. })));
+    h.get_by(|node| node.role() == egui::accesskit::Role::ComboBox && node.value().as_deref() == Some("48000 Hz")).click();
+    steps(&mut h);
+    h.get_by_label("96000 Hz").click();
+    steps(&mut h);
+    assert!(matches!(h.state().dialogs.open, Some(Dialog::Bounce { sample_rate: 96000, .. })));
+    h.get_by_label("Cancel").click();
+    steps(&mut h);
+    menus::invoke_menu(h.state_mut(), "track.bounce", "Track > Bounce...");
+    steps(&mut h);
+    assert_eq!(params(&h), track_params);
+    assert!(params(&h).get("sample_rate").is_none(), "Track Bounce remains session-rate delivery");
+}
+
+#[test]
+fn track_dialog_closes_on_successful_document_replacement_and_survives_failure() {
+    let dir = std::env::temp_dir().join(format!("sc-ui-track-bounce-lifecycle-{}", std::process::id()));
+    std::fs::create_dir(&dir).unwrap();
+    let saved = dir.join("session.scraft");
+    std::fs::write(&saved, soundcraft_engine::demo::demo_engine().session().to_json().unwrap()).unwrap();
+    for (command, p, succeeds) in [
+        ("session.new", json!({}), true),
+        ("session.close", json!({}), true),
+        ("session.open", json!({"path":saved}), true),
+        ("session.revert", json!({}), true),
+        ("session.new", json!({"sample_rate":0}), false),
+        ("session.open", json!({"path":dir.join("absent.scraft")}), false),
+    ] {
+        let mut h = harness();
+        h.state_mut().engine.path = Some(saved.to_string_lossy().into_owned());
+        h.state_mut().run("edit.select", json!({"tracks":["Kick"]})).unwrap();
+        menus::invoke_menu(h.state_mut(), "track.bounce", "Track > Bounce...");
+        steps(&mut h);
+        let original = params(&h);
+        assert_eq!(h.state_mut().run(command, p).is_ok(), succeeds);
+        steps(&mut h);
+        if succeeds {
+            assert!(h.state().dialogs.open.is_none(), "{command}");
+        } else {
+            assert_eq!(params(&h), original, "{command}");
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn programmatic_app_export_keeps_document_and_history_identity() {

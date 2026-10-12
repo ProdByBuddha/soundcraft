@@ -55,7 +55,7 @@ allocation limits and output-rate measurements. Conversion quality choices, layo
 loudness weighting and further dither controls remain ([details](bounce-sample-rate.md)).
 **SC-MX37 — Track Bounce delivery: partial.** [Selected Audio/built-in Instrument exports](track-bounce-files.md) use explicit destinations and existing session-rate WAV/AIFF/FLAC codecs without editing the document. WAV/AIFF support 16/24-bit integer and 32-bit float; FLAC supports 16/24-bit integer, up to eight channels and 655350 Hz. WAV layout masks, decoded frames and widths up to 16 channels are tested. A delivered mono/48 kHz PCM24 WAV was independently decoded. Native publication currently requires Unix and a hard-link-capable filesystem; single-file web delivery compiles but has no observed browser download. Windows native delivery, hosted/Aux/Master/real-time/multipath paths, sample-rate conversion, mono-file grouping and other manual options remain open. No format readiness or hour estimate changes.
 
-Standalone Track Bounce Float32 output inherits the baseline codec's over-range clipping. Own PR #345 integration and a separate over-range delivery round-trip are required before removing that limitation; this feature does not change the codecs.
+Integrated Track Bounce Float32 WAV/AIFF output preserves finite over-unity samples through a decoded round-trip. Nonfinite render output is rejected with no delivered file and original source/session state retained. Mix keeps its independent delivery-rate conversion; Track Bounce remains at session rate.
 
 ## MIDI and notation
 
