@@ -23,6 +23,11 @@ fn scan_lists_both_fixture_plugins() {
     let s = found.iter().find(|d| d.id == SYNTH).unwrap();
     assert_eq!(s.category, Category::Instrument);
     assert!(s.is_instrument);
+    if std::env::var_os("SOUNDCRAFT_CLAP_SEARCH_PATHS").is_some_and(|paths| paths.is_empty()) {
+        let rescanned = soundcraft_clap_host::rescan();
+        assert_eq!(rescanned.len(), 2, "exclusive empty automatic roots retain only the explicitly added fixture");
+        assert!(rescanned.iter().all(|d| d.path.starts_with(dir)));
+    }
     let global = soundcraft_clap_host::scan();
     assert!(global.iter().any(|d| d.id == GAIN) && global.iter().any(|d| d.id == SYNTH));
 }

@@ -10,10 +10,33 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn cargo(args: &[&str]) -> Result<(), String> {
-    let st =
-        Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into())).args(args).current_dir(root()).status().map_err(|e| e.to_string())?;
+fn cargo_command(args: &[&str]) -> Command {
+    let mut command = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+    command.args(args).current_dir(root());
+    command
+}
+
+fn run_cargo(mut command: Command, args: &[&str]) -> Result<(), String> {
+    let st = command.status().map_err(|e| e.to_string())?;
     if st.success() { Ok(()) } else { Err(format!("cargo {} failed", args.join(" "))) }
+}
+
+fn cargo(args: &[&str]) -> Result<(), String> {
+    run_cargo(cargo_command(args), args)
+}
+
+fn ci_test_command() -> Command {
+    let mut command = cargo_command(&["test", "--workspace"]);
+    command
+        .env("SOUNDCRAFT_VST3_SEARCH_PATHS", "")
+        .env("SOUNDCRAFT_CLAP_SEARCH_PATHS", "")
+        .env("SOUNDCRAFT_AU_MANUFACTURERS", "appl")
+        .env_remove("SOUNDCRAFT_VST3_SMOKE");
+    command
+}
+
+fn ci_test() -> Result<(), String> {
+    run_cargo(ci_test_command(), &["test", "--workspace"])
 }
 
 /// Layer table: crate name (minus `soundcraft-`) → layer. Apps and xtask are exempt.
@@ -148,7 +171,7 @@ fn ci() -> Result<(), String> {
     let steps: Vec<(&str, Box<dyn Fn() -> Result<(), String>>)> = vec![
         ("fmt", Box::new(|| cargo(&["fmt", "--all", "--", "--check"]))),
         ("clippy", Box::new(|| cargo(&["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]))),
-        ("test", Box::new(|| cargo(&["test", "--workspace"]))),
+        ("test", Box::new(ci_test)),
         ("assets", Box::new(assets)),
         ("layers", Box::new(layers)),
         ("wasm", Box::new(wasm)),
@@ -186,5 +209,25 @@ fn main() -> ExitCode {
             eprintln!("xtask: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod ci_policy_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::ffi::OsString;
+
+    #[test]
+    fn workspace_tests_enforce_isolation_without_filters_or_inherited_smoke() {
+        let command = ci_test_command();
+        assert_eq!(command.get_args().collect::<Vec<_>>(), vec!["test", "--workspace"]);
+        let values: BTreeMap<_, _> = command.get_envs().map(|(k, v)| (k.to_os_string(), v.map(OsString::from))).collect();
+        for key in ["SOUNDCRAFT_VST3_SEARCH_PATHS", "SOUNDCRAFT_CLAP_SEARCH_PATHS"] {
+            assert_eq!(values.get(&OsString::from(key)), Some(&Some(OsString::new())));
+        }
+        assert_eq!(values.get(&OsString::from("SOUNDCRAFT_AU_MANUFACTURERS")), Some(&Some(OsString::from("appl"))));
+        assert_eq!(values.get(&OsString::from("SOUNDCRAFT_VST3_SMOKE")), Some(&None));
+        assert!(cargo_command(&["test", "--workspace"]).get_envs().next().is_none());
     }
 }

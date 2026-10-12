@@ -31,6 +31,9 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(any(target_os = "macos", test))]
+mod discovery;
+
 #[cfg(target_os = "macos")]
 #[allow(unsafe_code)]
 mod ffi;
@@ -224,7 +227,10 @@ mod api {
     }
 }
 
-/// Every hostable Audio Unit registered on the system (effects, music effects, instruments).
+/// Every hostable Audio Unit allowed by automatic discovery (effects, music effects, instruments).
+/// `SOUNDCRAFT_AU_MANUFACTURERS`, when present, restricts discovery to comma-separated nonzero
+/// four-char or `#XXXXXXXX` manufacturer codes. An empty/invalid value discovers nothing;
+/// when absent, all registered manufacturers retain their existing behavior.
 /// Listed on first call (reads the component registry, creates no instances), then cached.
 pub fn scan() -> Vec<AuDescriptor> {
     api::scan()
