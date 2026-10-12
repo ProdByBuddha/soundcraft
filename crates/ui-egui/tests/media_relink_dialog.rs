@@ -195,7 +195,10 @@ fn document_replacement_discards_old_relink_consent_but_failed_commands_and_save
     ] {
         let mut app = prepared();
         let result = app.run(command, params);
-        assert_eq!(result.is_ok(), command.starts_with("session.save"));
+        assert_eq!(result.is_ok(), command == "session.save_as");
+        if command == "session.save_copy" {
+            assert!(!f.0.join("copy.scraft").exists(), "strict Copy rejects missing audio while preserving relink consent");
+        }
         let Some(Dialog::RelinkAudio { allow_unverified, path: selected, .. }) = &app.dialogs.open else {
             panic!("{command} must retain the original relink dialog");
         };

@@ -173,6 +173,65 @@ fn copy_sanitizes_nonfinite_output_without_changing_original_pcm_bits() {
 }
 
 #[test]
+fn native_and_bundle_copy_identity_matches_saved_pcm_with_headroom_and_sanitization() {
+    for nonfinite in [false, true] {
+        let dir = Fixture::new();
+        let mut e = audio();
+        let src = e.session().sources[0].id;
+        let values = if nonfinite {
+            [1.25, -2.5, -0.0, f32::from_bits(0x7fc0_0037), f32::INFINITY, f32::NEG_INFINITY, 0.25, 0.0].repeat(2)
+        } else {
+            [1.25, -2.5, -0.0, 0.25].repeat(4)
+        };
+        let original_bits: Vec<_> = values.iter().map(|sample| sample.to_bits()).collect();
+        let expected_bits: Vec<_> = values.iter().map(|sample| if sample.is_finite() { *sample } else { 0.0 }.to_bits()).collect();
+        let buffer = AudioBuffer { sample_rate: 48_000, channels: vec![values] };
+        let original_identity = soundcraft_engine::media::audio_identity(&buffer);
+        {
+            let s = e.session_mut();
+            s.pool.insert(src, Arc::new(SourceAudio::new(buffer)));
+            s.sources.iter_mut().find(|source| source.id == src).unwrap().audio_identity = Some(original_identity.clone());
+            let mut insert = Insert::new("synthetic-never-opened");
+            insert.state = Some(soundcraft_model::b64::encode(b"opaque insert snapshot"));
+            s.tracks[0].mixer.inserts[0] = Some(insert);
+            s.tracks[3].instrument.as_mut().unwrap().state = Some(soundcraft_model::b64::encode(b"opaque instrument snapshot"));
+        }
+        e.execute("track.new", &json!({"name":"Redo remains"})).unwrap();
+        assert!(e.undo());
+        let (before, revision, dirty, path, history, redo, journal) =
+            (e.session_arc(), e.revision, e.is_dirty(), e.path.clone(), e.undo_history(), e.redo_label().map(str::to_string), e.journal.clone());
+        for bundled in [false, true] {
+            let mut reopened = Engine::default();
+            if bundled {
+                let (bytes, result) = session_copy::bundle(&e, &dir.path("bundle/Copy.scraftz")).unwrap();
+                assert!(result.audio_complete);
+                assert!(io::open_session_bytes(&mut reopened, &result.output_path, &bytes).unwrap().is_empty());
+            } else {
+                let target = dir.path("native/Copy.scraft");
+                assert_eq!(e.execute("session.save_copy", &json!({"path":target,"expected_revision":revision})).unwrap()["audio_complete"], true);
+                assert!(io::open_session(&mut reopened, &target).unwrap().is_empty());
+            }
+            let saved = &reopened.session().pool.get(src).unwrap().buffer;
+            assert_eq!(saved.channels[0].iter().map(|sample| sample.to_bits()).collect::<Vec<_>>(), expected_bits);
+            let saved_identity = soundcraft_engine::media::audio_identity(saved);
+            assert_eq!(reopened.session().source(src).unwrap().audio_identity.as_deref(), Some(saved_identity.as_str()));
+            assert_eq!(saved_identity == original_identity, !nonfinite);
+            assert_eq!(reopened.session().tracks, before.tracks, "opaque insert/instrument snapshots remain intact");
+            assert!(Arc::ptr_eq(&before, &e.session_arc()));
+            assert_eq!(e.session().source(src).unwrap().audio_identity.as_deref(), Some(original_identity.as_str()));
+            assert_eq!(
+                e.session().pool.get(src).unwrap().buffer.channels[0].iter().map(|sample| sample.to_bits()).collect::<Vec<_>>(),
+                original_bits
+            );
+            assert_eq!(
+                (e.revision, e.is_dirty(), e.path.clone(), e.undo_history(), e.redo_label().map(str::to_string), e.journal.clone()),
+                (revision, dirty, path.clone(), history.clone(), redo.clone(), journal.clone())
+            );
+        }
+    }
+}
+
+#[test]
 fn copied_audio_is_repaired_when_same_sized_existing_media_was_changed() {
     let dir = Fixture::new();
     let mut e = audio();

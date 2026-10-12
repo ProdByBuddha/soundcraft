@@ -1,5 +1,7 @@
 # Audio-portable session copies
 
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Float32 identity and Copy lifecycle verification)
+
 `session.save_copy` packages every declared audio source into a new SoundCraft session without
 changing the open document, its saved path, dirty state, selection, Undo or Redo. Copy and its
 preview are excluded from the recovery journal. Ordinary Save, Save As and autosave remain able
@@ -59,7 +61,7 @@ counts are checked before output.
 The dedicated Copy dialog shows the audio policy, blocked sources and external-video limit.
 Edits preserve its typed destination but make the preview stale until Refresh Preview is
 pressed. Successful New/Open/Close/Revert dismisses only the Copy dialog. A failed open leaves
-it available. Escape cancels without copying, including when Enter is pressed in the same frame.
+it available. Escape or Cancel suppresses copying, including when Enter is pressed in the same frame.
 Available live plugin state is captured only into a detached export document; preview never
 captures state or opens plugins.
 
@@ -75,8 +77,18 @@ selected-time export and timing remap, exact original-file bytes, BWF metadata, 
 external plugin-file inventory and whole-copy rollback remain separate work. It does not provide
 Pro Tools session interchange.
 
-Integration review is needed with the independent autosave-isolation and media-relink drafts,
-which also edit `io.rs`: preserve validated recovery reuse and the optional saved-PCM identity.
-The pinned baseline encoder clamps above-unity Float32 samples; its separate headroom fix must
-integrate before above-unity sample preservation can be claimed. Baseline copy fixtures use
-finite samples within unity. No proprietary resources or reference-manual wording are bundled.
+Fork integration retains per-document recovery, byte-validated media reuse and relink identity
+checks. Native and bundled Copy assign each source's identity from the encoded and decoded saved
+PCM. Combined regressions preserve finite above-unity samples and signed zero, sanitize NaN and
+infinities to zero, and reopen both forms without identity warnings. They also retain opaque
+insert/instrument state and the original document, source identity, Undo/Redo and recovery journal.
+These are synthetic audio checks; installed plugin-state capture, browser download retention and
+physical-device acceptance remain separate. No proprietary resources or reference-manual wording
+are bundled.
+
+## Revision history
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-10-12 | minor | Integrated saved-PCM identities, Float32 headroom and nonfinite handling; verified immutable export and dialog cancellation |
+| 2026-10-12 | minor | Added strict audio-completeness preflight, native/bundled Copy and dedicated preview dialog |

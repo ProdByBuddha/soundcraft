@@ -1,5 +1,5 @@
 //! Exercise the real Copy dialog and UI dispatcher without a player or hosted plugins.
-use egui::{Event, Key, Modifiers, vec2};
+use egui::{Event, Key, Modifiers, PointerButton, vec2};
 use egui_kittest::{Harness, kittest::Queryable};
 use serde_json::json;
 use soundcraft_engine::{Engine, io, session_copy};
@@ -153,6 +153,32 @@ fn replacing_a_copy_needs_a_button_and_escape_cancels_even_with_enter() {
     h.step();
     assert!(!absent.0.exists());
     assert!(h.state().dialogs.open.is_none());
+}
+
+#[test]
+fn clicked_cancel_suppresses_same_frame_enter_without_creating_copy_output() {
+    let dir = Fixture::new();
+    let mut h = harness(Engine::default(), &dir.path());
+    let before = h.state().engine.session_arc();
+    let revision = h.state().engine.revision;
+    let history = h.state().engine.undo_history();
+    match &h.state().dialogs.open {
+        Some(Dialog::SaveCopy { preview, .. }) => assert!(preview.ready),
+        _ => panic!("ready copy dialog required"),
+    }
+    let pos = h.get_by_label("Cancel").rect().center();
+    h.input_mut().events.extend([
+        Event::PointerMoved(pos),
+        Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE },
+        Event::PointerButton { pos, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE },
+        Event::Key { key: Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE },
+    ]);
+    h.run_steps(3);
+    assert!(h.state().dialogs.open.is_none());
+    assert!(!dir.0.exists());
+    assert!(Arc::ptr_eq(&before, &h.state().engine.session_arc()));
+    assert_eq!(revision, h.state().engine.revision);
+    assert_eq!(history, h.state().engine.undo_history());
 }
 
 #[test]
