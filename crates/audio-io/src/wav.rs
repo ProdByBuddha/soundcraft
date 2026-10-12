@@ -1,7 +1,7 @@
 //! Native WAV / BWF / RF64 reader and writer (RIFF chunk layout per the Microsoft multimedia
 //! specification, `bext` per EBU Tech 3285, `ds64` per EBU Tech 3306).
 
-use crate::pcm::{PcmKind, Quantizer, clamp_float, deinterleave, le_u16, le_u32, le_u64, tag, validate_buffer};
+use crate::pcm::{PcmKind, Quantizer, deinterleave, finite_float, le_u16, le_u32, le_u64, tag, validate_buffer};
 use crate::{AudioBuffer, AudioError, AudioInfo, BitDepth, BwfInfo, FileFormat, Result, SampleFormat};
 
 const WAVE_FORMAT_PCM: u16 = 1;
@@ -288,7 +288,7 @@ pub(crate) fn encode(
         for (ch, q) in buf.channels.iter().zip(qs.iter_mut()) {
             let s = ch.get(f).copied().unwrap_or(0.0);
             if is_float {
-                out.extend_from_slice(&clamp_float(s).to_le_bytes());
+                out.extend_from_slice(&finite_float(s).to_le_bytes());
             } else {
                 let v = q.quantize(s).to_le_bytes();
                 out.extend_from_slice(v.get(..bytes).unwrap_or_default());
