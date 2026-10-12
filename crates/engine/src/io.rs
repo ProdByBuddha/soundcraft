@@ -448,10 +448,27 @@ pub fn commit_track(e: &mut Engine, t: TrackId) -> Result<Option<TrackId>> {
     if end <= 0 {
         return Ok(None);
     }
-    let range = Range::new(0, end + s.sample_rate.samples(2.0));
+    let fmt = tr.format;
+    if fmt.channels() > soundcraft_mix::MAX_CHANNELS {
+        return Err(EngineError::BadParams(
+            "track.commit".into(),
+            format!("track commit supports at most {} channels; cannot render {}", soundcraft_mix::MAX_CHANNELS, fmt.label()),
+        ));
+    }
+    let too_long = || EngineError::BadParams("track.commit".into(), "track plus render tail exceeds the offline render limit".into());
+    let end = end.checked_add(s.sample_rate.samples(2.0)).ok_or_else(too_long)?;
+    let frames = usize::try_from(end).map_err(|_| too_long())?;
+    // The shared renderer uses a stereo main mix for mono, then folds it back to mono.
+    // Reject requests it would truncate before rendering or replacing the source track.
+    if frames > soundcraft_mix::MAX_RENDER_SAMPLES / fmt.channels().max(2) {
+        return Err(too_long());
+    }
+    let range = Range::new(0, end);
     let audio = soundcraft_mix::render_track_pre_fader(s, t, range);
+    if audio.len() != fmt.channels() || audio.iter().any(|channel| channel.len() != frames) {
+        return Err(EngineError::Io("track commit did not render the complete channel format and range".into()));
+    }
     let name = format!("{}.cm", tr.name);
-    let fmt = ChannelFormat::for_channels(audio.len().clamp(1, 2));
     let mixer = tr.mixer.clone();
     let buf = AudioBuffer { sample_rate: s.sample_rate.hz(), channels: audio };
     let s = e.session_mut();
