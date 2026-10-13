@@ -12,11 +12,12 @@ use symphonia::core::codecs::{
 };
 use symphonia::core::errors::Error as SymError;
 use symphonia::core::formats::{FormatOptions, FormatReader};
-use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
+use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
 use crate::pcm::MAX_DECODE_SAMPLES;
+use crate::reader::ReaderOptions;
 use crate::{AudioBuffer, AudioError, AudioInfo, FileFormat, Result, SampleFormat};
 
 fn map_err(e: SymError) -> AudioError {
@@ -33,7 +34,11 @@ fn guarded<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
 }
 
 fn open(bytes: &[u8], ext_hint: Option<&str>) -> Result<Box<dyn FormatReader>> {
-    let mss = MediaSourceStream::new(Box::new(Cursor::new(bytes.to_vec())), MediaSourceStreamOptions::default());
+    open_media(Box::new(Cursor::new(bytes.to_vec())), ext_hint)
+}
+
+fn open_media(source: Box<dyn MediaSource>, ext_hint: Option<&str>) -> Result<Box<dyn FormatReader>> {
+    let mss = MediaSourceStream::new(source, MediaSourceStreamOptions::default());
     let mut hint = Hint::new();
     if let Some(ext) = ext_hint {
         hint.with_extension(ext.trim_start_matches('.'));
@@ -116,9 +121,23 @@ fn info_of(reader: &dyn FormatReader, detected: FileFormat) -> Result<(u32, Audi
 
 /// Decode the whole first audio track. When `count_only`, samples are counted but not stored.
 fn run(bytes: &[u8], ext_hint: Option<&str>, detected: FileFormat, count_only: bool) -> Result<(AudioInfo, AudioBuffer)> {
-    let mut reader = open(bytes, ext_hint)?;
+    run_open(open(bytes, ext_hint)?, detected, count_only, None)
+}
+
+fn run_open(
+    mut reader: Box<dyn FormatReader>,
+    detected: FileFormat,
+    count_only: bool,
+    options: Option<&ReaderOptions>,
+) -> Result<(AudioInfo, AudioBuffer)> {
+    if let Some(options) = options {
+        options.check_cancelled()?;
+    }
     let (track_id, mut info) = info_of(reader.as_ref(), detected)?;
     if let Some(n) = reader.tracks().iter().find(|t| t.id == track_id).and_then(|t| t.codec_params.n_frames) {
+        if let Some(options) = options {
+            options.admit_samples(n, usize::from(info.channels.max(1)))?;
+        }
         let total = n.saturating_mul(u64::from(info.channels.max(1)));
         if !count_only && total > MAX_DECODE_SAMPLES {
             return Err(AudioError::TooLarge(format!("{total} samples exceeds the decode limit")));
@@ -137,6 +156,9 @@ fn run(bytes: &[u8], ext_hint: Option<&str>, detected: FileFormat, count_only: b
     let mut sbuf: Option<SampleBuffer<f32>> = None;
     let mut errors = 0usize;
     loop {
+        if let Some(options) = options {
+            options.check_cancelled()?;
+        }
         let packet = match reader.next_packet() {
             Ok(p) => p,
             Err(SymError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
@@ -170,13 +192,26 @@ fn run(bytes: &[u8], ext_hint: Option<&str>, detected: FileFormat, count_only: b
         if ch == 0 {
             continue;
         }
+        if let Some(options) = options {
+            options.check_cancelled()?;
+            if (!planar.is_empty() && planar.len() != ch) || spec.rate != info.sample_rate {
+                return Err(AudioError::Unsupported("changing channel count or sample rate during reader decode".into()));
+            }
+        }
         if planar.is_empty() {
             // The decoded stream is authoritative for the channel count.
             info.channels = u16::try_from(ch).map_err(|_| AudioError::Unsupported("too many channels".into()))?;
             planar = (0..ch).map(|_| Vec::new()).collect();
         }
         let n = decoded.frames() as u64;
-        frames = frames.saturating_add(n);
+        frames = if options.is_some() {
+            frames.checked_add(n).ok_or_else(|| AudioError::TooLarge("decoded frame count overflow".into()))?
+        } else {
+            frames.saturating_add(n)
+        };
+        if let Some(options) = options {
+            options.admit_samples(frames, ch)?;
+        }
         if frames.saturating_mul(ch as u64) > MAX_DECODE_SAMPLES {
             return Err(AudioError::TooLarge("decoded audio exceeds the 4 GiB limit".into()));
         }
@@ -184,8 +219,16 @@ fn run(bytes: &[u8], ext_hint: Option<&str>, detected: FileFormat, count_only: b
             continue;
         }
         let needed = decoded.capacity() as u64;
+        let needed_values = decoded.capacity().checked_mul(ch).ok_or_else(|| AudioError::TooLarge("decode scratch size overflow".into()))?;
+        if let Some(options) = options {
+            options.admit_samples(needed, ch)?;
+            let needed_frames = usize::try_from(n).map_err(|_| AudioError::TooLarge("packet frame count exceeds address space".into()))?;
+            for channel in &mut planar {
+                channel.try_reserve_exact(needed_frames).map_err(|_| AudioError::TooLarge("PCM sample allocation failed".into()))?;
+            }
+        }
         let sb = match &mut sbuf {
-            Some(sb) if sb.capacity() >= decoded.capacity() * ch => sb,
+            Some(sb) if sb.capacity() >= needed_values => sb,
             _ => sbuf.insert(SampleBuffer::<f32>::new(needed, spec)),
         };
         sb.copy_interleaved_ref(decoded);
@@ -194,6 +237,9 @@ fn run(bytes: &[u8], ext_hint: Option<&str>, detected: FileFormat, count_only: b
                 dst.push(if s.is_finite() { s } else { 0.0 });
             }
         }
+    }
+    if let Some(options) = options {
+        options.check_cancelled()?;
     }
     if info.channels == 0 {
         return Err(AudioError::Malformed("stream contains no audio".into()));
@@ -220,4 +266,27 @@ pub(crate) fn probe(bytes: &[u8], ext_hint: Option<&str>, detected: FileFormat) 
 
 pub(crate) fn decode(bytes: &[u8], ext_hint: Option<&str>, detected: FileFormat) -> Result<(AudioInfo, AudioBuffer)> {
     guarded(|| run(bytes, ext_hint, detected, false))
+}
+
+pub(crate) fn probe_reader(source: Box<dyn MediaSource>, ext_hint: Option<&str>, detected: FileFormat, options: &ReaderOptions) -> Result<AudioInfo> {
+    guarded(|| {
+        options.check_cancelled()?;
+        let reader = open_media(source, ext_hint)?;
+        let (_, info) = info_of(reader.as_ref(), detected)?;
+        options.admit_samples(info.frames, usize::from(info.channels.max(1)))?;
+        if info.frames > 0 && info.channels > 0 {
+            options.check_cancelled()?;
+            return Ok(info);
+        }
+        run_open(reader, detected, true, Some(options)).map(|(info, _)| info)
+    })
+}
+
+pub(crate) fn decode_reader(
+    source: Box<dyn MediaSource>,
+    ext_hint: Option<&str>,
+    detected: FileFormat,
+    options: &ReaderOptions,
+) -> Result<(AudioInfo, AudioBuffer)> {
+    guarded(|| run_open(open_media(source, ext_hint)?, detected, false, Some(options)))
 }

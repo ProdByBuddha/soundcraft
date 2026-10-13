@@ -14,6 +14,7 @@ pub mod edit;
 pub mod inspect;
 pub mod io;
 pub mod media;
+pub mod original_audio;
 pub mod score;
 mod selection_repeat;
 pub mod session_copy;
@@ -125,6 +126,8 @@ pub struct Engine {
     merge_key: Option<String>,
     /// Messages for the UI status line / agents.
     pub messages: Vec<String>,
+    /// Control-side managed original assets. Leases never perform filesystem work on drop.
+    original_store: Option<original_audio::OriginalStore>,
 }
 
 impl Default for Engine {
@@ -154,6 +157,7 @@ impl Engine {
             dirty_at: Cell::new((0, false)),
             merge_key: None,
             messages: Vec::new(),
+            original_store: None,
         }
     }
 
@@ -163,6 +167,20 @@ impl Engine {
 
     pub fn session_arc(&self) -> Arc<Session> {
         Arc::clone(&self.doc)
+    }
+
+    /// Select a fresh, exclusively created original-asset directory before the first import.
+    pub fn configure_original_store(&mut self, root: std::path::PathBuf, max_bytes: u64) -> Result<()> {
+        if self.original_store.is_some() {
+            return Err(EngineError::Io("original store is already configured".into()));
+        }
+        self.original_store = Some(original_audio::OriginalStore::new(root, max_bytes)?);
+        Ok(())
+    }
+
+    /// Explicit control-thread collection; history, prepared and document leases retain assets.
+    pub fn collect_original_assets(&mut self) -> Result<usize> {
+        self.original_store.as_mut().map_or(Ok(0), original_audio::OriginalStore::collect_expired)
     }
 
     /// Identifies the current open-document lifetime within this engine. Hosts can use it to

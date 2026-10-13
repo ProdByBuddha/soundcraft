@@ -1,6 +1,6 @@
 # SoundCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (shared prepared automation playback scope; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (native Unix original-audio preservation; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Forward-looking plan. Status and numbers: [`../ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the ranked work list: [`gaps.md`](gaps.md).
@@ -91,6 +91,8 @@ Beta needs ~75 % ready for real work and no blocking gap in session interchange.
 
 Needs a human: hardware for G-01/G-02/G-10/G-11, native-speaker review, and owner decisions on
 AAX, `.ptx` and Avid cloud features.
+
+**ED-31 native Unix original preservation.** [Original audio](original-audio.md) records native Unix Copy/Reference/Convert import choices, source-rate BWF/hash provenance, atomic batches and separate original/playback files in portable audio copies. Ordinary recovery retains unresolved originals with warnings. Safe non-Unix snapshot ownership, browser original storage, disk-streaming playback, broader external assets and physical-device acceptance remain open; stage and estimates are unchanged.
 
 **SC-MX11 follow-up: partial.** [Shared prepared automation](automation-playback.md) implements sample-position consumers for all seven families in supported audible paths, with static seeds, retained processor/editor identity and control-owned teardown. The original all-exposed-AutoParam acceptance, EX01–EX10 and platform/vendor/device gates remain open. Alpha gate, milestone estimates and readiness numbers are unchanged.
 

@@ -13,6 +13,7 @@ pub mod edit_window;
 pub mod extra_windows;
 pub mod fonts;
 pub mod icons;
+mod import_audio_dialog;
 pub mod menus;
 pub mod midi_editor;
 pub mod mix_window;

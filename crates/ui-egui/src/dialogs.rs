@@ -15,6 +15,7 @@ pub enum Dialog {
     NewSession { name: String, sample_rate: u32, demo: bool },
     Bounce { path: String, format: String, bit_depth: String, sample_rate: u32, normalize: bool },
     TrackBounce(crate::track_bounce_dialog::TrackBounceDialog),
+    ImportAudio(crate::import_audio_dialog::ImportAudioDialog),
     RenameTrack { id: TrackId, name: String },
     BatchRenameTracks(Box<crate::batch_rename::BatchRename>),
     RenameClip { id: ClipId, name: String },
@@ -46,6 +47,7 @@ impl Dialogs {
             Dialog::NewSession { .. } => "new_session",
             Dialog::Bounce { .. } => "bounce",
             Dialog::TrackBounce(_) => "track_bounce",
+            Dialog::ImportAudio(_) => "import_audio",
             Dialog::RenameTrack { .. } => "rename_track",
             Dialog::BatchRenameTracks(_) => "batch_rename_tracks",
             Dialog::RenameClip { .. } => "rename_clip",
@@ -81,6 +83,12 @@ impl Dialogs {
     pub fn open_track_bounce(&mut self, e: &Engine, tracks: Vec<TrackId>) {
         self.after_save = None;
         self.open = Some(Dialog::TrackBounce(crate::track_bounce_dialog::TrackBounceDialog::new(e, tracks, default_dir())));
+    }
+
+    /// Workspace and menu imports use the same explicit ownership/conversion choices.
+    pub fn open_import_audio(&mut self, e: &Engine, path: Option<String>) {
+        self.after_save = None;
+        self.open = Some(Dialog::ImportAudio(crate::import_audio_dialog::ImportAudioDialog::new(e, path)));
     }
 
     pub fn open_rename_clip(&mut self, id: ClipId, name: &str) {
@@ -141,7 +149,7 @@ impl Dialogs {
                 sample_rate: e.session().sample_rate.hz(),
                 normalize: false,
             },
-            "file.import_audio" => Dialog::PathPrompt { cmd: id.into(), title: "Import Audio".into(), path: home, key: "path".into() },
+            "file.import_audio" => Dialog::ImportAudio(crate::import_audio_dialog::ImportAudioDialog::new(e, None)),
             "file.import_midi" => Dialog::PathPrompt { cmd: id.into(), title: "Import MIDI".into(), path: home, key: "path".into() },
             "session.open" => Dialog::PathPrompt { cmd: id.into(), title: "Open Session".into(), path: home, key: "path".into() },
             "session.save" if e.path.is_some() => return false,
@@ -319,6 +327,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
         Dialog::NewSession { .. } => "New Session",
         Dialog::Bounce { .. } => "Bounce Mix",
         Dialog::TrackBounce(_) => "Track Bounce",
+        Dialog::ImportAudio(_) => "Import Audio",
         Dialog::RenameTrack { .. } => "Rename Track",
         Dialog::BatchRenameTracks(_) => "Batch Rename Tracks",
         Dialog::RenameClip { .. } => "Rename Clip",
@@ -350,6 +359,11 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
             Dialog::TrackBounce(dialog) => {
                 if let Some(params) = dialog.show(app, ui, enter) {
                     action = Some(("track.bounce".into(), params));
+                }
+            }
+            Dialog::ImportAudio(dialog) => {
+                if let Some(params) = dialog.show(app, ui, enter) {
+                    action = Some(("file.import_audio".into(), params));
                 }
             }
             Dialog::RelinkAudio { source, name, expected, path, has_identity, allow_unverified, error } => {
@@ -736,7 +750,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
         }
     });
     if esc || ctx.memory(|m| m.data.get_temp::<bool>(egui::Id::new("dlg_cancel")).unwrap_or(false)) {
-        if matches!(d, Dialog::TrackBounce(_) | Dialog::SaveCopy { .. }) {
+        if matches!(d, Dialog::TrackBounce(_) | Dialog::ImportAudio(_) | Dialog::SaveCopy { .. }) {
             action = None;
         }
         keep = false;
@@ -768,10 +782,19 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
                 app.ui.status = format!("Exported {} clip(s) to {}", v["written"], v["dir"].as_str().unwrap_or_default());
             }
             Ok(_) if cmd == "media.relink" => app.ui.status = "Audio relinked".into(),
+            Ok(v) if cmd == "file.import_audio" => {
+                let count = v["imported"].as_array().map_or(0, Vec::len);
+                let policy = v["policy"].as_str().unwrap_or("copy");
+                app.ui.status = format!("Imported {count} file(s) · {policy} · original bytes and playback audio recorded separately");
+            }
             Ok(_) => {}
             Err(e) => {
                 if let Dialog::RelinkAudio { error, .. } = &mut d {
                     *error = e.clone();
+                    keep = true;
+                }
+                if let Dialog::ImportAudio(dialog) = &mut d {
+                    dialog.error = e.clone();
                     keep = true;
                 }
                 app.ui.status = e;

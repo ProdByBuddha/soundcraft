@@ -125,6 +125,32 @@ pub fn clip_list(app: &mut SoundApp, ui: &mut Ui) {
     egui::ScrollArea::vertical().id_salt("clips_scroll").auto_shrink([false, false]).show(ui, |ui| {
         for (id, name, whole, color, selected) in items {
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 17.0), if whole { Sense::click_and_drag() } else { Sense::click() });
+            let resp = if whole {
+                resp.on_hover_ui(|ui| {
+                    if let Some(source) = app.engine.session().source(SourceId(id)) {
+                        ui.label(format!("Playback: {} Hz · {} frames · {} channels", source.sample_rate, source.frames, source.channels));
+                        ui.label(format!("Playback file: {}", source.path));
+                        if let Some(original) = &source.original {
+                            ui.separator();
+                            ui.label(format!(
+                                "Original: {} Hz · {} frames · {} channels",
+                                original.info.sample_rate, original.info.frames, original.info.channels
+                            ));
+                            ui.label(format!("Import policy: {:?}", original.policy));
+                            ui.label(format!("Original file: {}", original.path));
+                            ui.label(format!("Original size: {} bytes", original.bytes));
+                            ui.label(format!("Recorded encoded SHA-256: {}", original.sha256));
+                            if let Some(bwf) = &original.info.bwf {
+                                ui.label(format!("BWF timestamp: {} samples at {} Hz", bwf.time_reference, original.info.sample_rate));
+                            }
+                        } else {
+                            ui.label("Original bytes and rate were not recorded for this source.");
+                        }
+                    }
+                })
+            } else {
+                resp
+            };
             resp.context_menu(|ui| {
                 if whole {
                     if ui.button("Place on New Track").clicked() {

@@ -39,5 +39,5 @@ fn save(e: &mut Engine, p: &Value) -> Result<Value> {
 
 fn preview(e: &mut Engine, p: &Value) -> Result<Value> {
     let path = validate(e, p, true)?;
-    serde_json::to_value(crate::session_copy::preview(e, path)).map_err(|err| EngineError::Io(err.to_string()))
+    serde_json::to_value(crate::session_copy::verified_preview(e, path)).map_err(|err| EngineError::Io(err.to_string()))
 }

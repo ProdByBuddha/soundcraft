@@ -543,6 +543,7 @@ mod tests {
             time_reference: 0,
             unsaved: false,
             audio_identity: None,
+            original: None,
         });
         let id = s.new_clip_id();
         if let Some(pl) = s.track_mut(t).and_then(|t| t.playlist_mut()) {

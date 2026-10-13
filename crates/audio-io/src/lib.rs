@@ -6,6 +6,8 @@
 //!   `WAVE_FORMAT_EXTENSIBLE`, RF64/BW64, BWF `bext`) and AIFF/AIFF-C (big-endian, `sowt`,
 //!   `fl32`/`fl64`) with native readers, and everything else (FLAC, MP3, Ogg Vorbis, AAC/ALAC in
 //!   MP4, CAF, Matroska, ADPCM/A-law/µ-law WAV, ...) through `symphonia`.
+//! * [`probe_reader`] / [`decode_reader`] accept owned seekable inputs with byte/sample admission
+//!   and cooperative cancellation, without retaining whole encoded inputs in memory.
 //! * [`encode`] writes WAV/BWF (RF64 above 4 GiB), AIFF / AIFF-C `fl32`, and FLAC (built-in
 //!   encoder), with optional TPDF dither.
 //! * [`wav_float_header`] heads a float WAV written while it grows (recording).
@@ -17,14 +19,19 @@ mod buffer;
 mod flac;
 mod pcm;
 pub mod peaks;
+mod reader;
 mod symph;
 mod wav;
 
 pub use buffer::AudioBuffer;
+pub use reader::{ReaderOptions, decode_reader, probe_reader};
 
 /// Errors from probing, decoding and encoding.
 #[derive(Debug, thiserror::Error)]
 pub enum AudioError {
+    /// A caller cancelled a reader-based operation.
+    #[error("audio operation cancelled")]
+    Cancelled,
     /// The format, codec or option is valid but not supported.
     #[error("unsupported audio: {0}")]
     Unsupported(String),
