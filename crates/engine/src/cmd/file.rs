@@ -78,7 +78,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 crate::io::import_video_bytes(e, &path, bytes, at)
             }
         ),
-        cmd!(noundo "file.bounce_mix", "Bounce Mix...", ["File"], Some("Cmd+Alt+B"), "{path, format?: wav|aiff|flac, bit_depth?: 16|24|32f, sample_rate?: integer Hz (8000..768000; default session rate), start?, end?, source?: main|bus name, normalize?: false, dither?: true, fold_down?: stereo}", always, bounce),
+        cmd!(query "file.bounce_mix", "Bounce Mix...", ["File"], Some("Cmd+Alt+B"), "{path, format?: wav|aiff|flac, bit_depth?: 16|24|32f, sample_rate?: integer Hz (8000..768000; default session rate), start?, end?, length?, source?: main|bus name, normalize?: false, dither?: true, fold_down?: stereo, tail_samples?: integer>=0, preroll_start?: integer (default capture start; earlier history explicit), expected_revision?}", always, bounce),
         cmd!(noundo "file.bounce_stems", "Bounce Stems...", [], None, "{dir, format?: wav|aiff|flac, bit_depth?: 16|24|32f, start?, end?, fold_down?: stereo}", has_tracks, |e, p| {
             let dir = str_param(p, "dir").ok_or_else(|| bad("file.bounce_stems", "`dir` required"))?.to_string();
             let r = range_param(e, "file.bounce_stems", p)?;
@@ -272,17 +272,6 @@ fn import_audio_target(e: &Engine, p: &Value) -> Result<Option<TrackId>> {
     selected.map(Some).ok_or_else(|| bad("file.import_audio", "`new_tracks: false` needs `track` or a selected audio track"))
 }
 
-/// `source` omitted or `main` is the main mix. Any other name is a bus, and an unknown bus is an error.
-fn bounce_bus(e: &Engine, p: &Value) -> Result<Option<soundcraft_model::BusId>> {
-    let Some(name) = str_param(p, "source").map(str::trim).filter(|s| !s.is_empty()) else {
-        return Ok(None);
-    };
-    if name.eq_ignore_ascii_case("main") {
-        return Ok(None);
-    }
-    e.session().bus_by_name(name).map(|b| Some(b.id)).ok_or_else(|| bad("file.bounce_mix", format!("unknown bus `{name}`")))
-}
-
 /// `fold_down: "stereo"` bounces an ITU stereo fold-down of a surround mix.
 fn fold_down_param(p: &Value, id: &str) -> Result<bool> {
     match str_param(p, "fold_down").map(str::trim) {
@@ -293,37 +282,25 @@ fn fold_down_param(p: &Value, id: &str) -> Result<bool> {
 }
 
 fn bounce(e: &mut Engine, p: &Value) -> Result<Value> {
-    let path = str_param(p, "path").ok_or_else(|| bad("file.bounce_mix", "`path` required"))?.to_string();
-    let r = range_param(e, "file.bounce_mix", p)?;
-    let r = if r.is_empty() { soundcraft_time::Range::new(0, e.session().content_end().max(1)) } else { r };
-    let ext = std::path::Path::new(&path).extension().and_then(|x| x.to_str()).unwrap_or("wav").to_ascii_lowercase();
-    let format_name = str_param(p, "format").unwrap_or(ext.as_str());
-    let format = soundcraft_audio_io::encode_format_for(format_name).ok_or_else(|| {
-        bad("file.bounce_mix", format!("cannot write `{format_name}` files (supported: {})", soundcraft_audio_io::ENCODE_EXTENSIONS))
-    })?;
-    let bit_depth = match p.get("bit_depth").map(|b| b.to_string().trim_matches('"').to_string()).as_deref() {
-        Some("16") => soundcraft_audio_io::BitDepth::Int16,
-        Some("32") | Some("32f") => soundcraft_audio_io::BitDepth::Float32,
-        _ => soundcraft_audio_io::BitDepth::Int24,
+    let (path, request) = crate::io::parse_bounce_request(e, p)?;
+    let (output, delivery) = if cfg!(target_arch = "wasm32") {
+        let output = crate::io::bounce_request(e, &request)?;
+        crate::io::write_file(path.to_str().ok_or_else(|| bad("file.bounce_mix", "path must be UTF-8"))?, &output.bytes)?;
+        (output, None)
+    } else {
+        let (output, receipt) = crate::io::deliver_bounce(e, &path, &request)?;
+        (output, Some(receipt))
     };
-    let opts = soundcraft_audio_io::EncodeOptions { format, bit_depth, dither: bool_or(p, "dither", true), bwf: None };
-    let normalize = bool_or(p, "normalize", false);
-    let fold = fold_down_param(p, "file.bounce_mix")?;
-    let bus = bounce_bus(e, p)?;
-    let sample_rate = match p.get("sample_rate") {
-        None => e.session().sample_rate,
-        Some(value) => {
-            let hz = value
-                .as_u64()
-                .and_then(|n| u32::try_from(n).ok())
-                .ok_or_else(|| bad("file.bounce_mix", "`sample_rate` must be an integer number of Hz"))?;
-            SampleRate::new(hz).map_err(|err| bad("file.bounce_mix", err.to_string()))?
-        }
-    };
-    let output = crate::io::bounce_source_at_rate(e, r, &opts, normalize, fold, bus, sample_rate)?;
-    crate::io::write_file(&path, &output.bytes)?;
-    Ok(json!({"path": path, "bytes": output.bytes.len(), "sample_rate": output.sample_rate.hz(), "frames": output.frames,
-            "seconds": output.frames as f64 / output.sample_rate.as_f64(), "peak_db": output.stats.0, "lufs": output.stats.1, "true_peak_db": output.stats.2}))
+    let output_path = delivery
+        .as_ref()
+        .map(|receipt| receipt.output_path.clone())
+        .unwrap_or_else(|| path.file_name().and_then(|name| name.to_str()).unwrap_or("Untitled").to_owned());
+    Ok(
+        json!({"path": path, "output_path":output_path,"bytes": output.bytes.len(), "sample_rate": output.sample_rate.hz(), "frames": output.frames,"channels":output.channels,
+        "seconds": output.frames as f64 / output.sample_rate.as_f64(), "peak_db": output.stats.0, "lufs": output.stats.1, "true_peak_db": output.stats.2,
+        "input_range":{"start":output.input_range.start,"end":output.input_range.end},"tail_samples":output.tail_samples,"preroll_start":output.preroll_start,
+        "plugin_state":"stored_document","delivery":if delivery.is_some(){"native_file_synced"}else{"browser_hook_accepted"},"publication":delivery}),
+    )
 }
 
 /// Write the score of the chosen MIDI tracks as MusicXML (or SVG when `svg`).

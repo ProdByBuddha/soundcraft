@@ -263,6 +263,210 @@ pub fn bounce_source(
     Ok((output.bytes, output.stats))
 }
 
+/// Explicit capture, preroll, tail and delivery policy. Live state is supplied by a detached
+/// document by the host; this engine API only reads the stored document it receives.
+#[derive(Debug, Clone)]
+pub struct BounceRequest {
+    pub range: Range,
+    pub tail_samples: Samples,
+    pub preroll_start: Samples,
+    pub sample_rate: SampleRate,
+    pub bus: Option<BusId>,
+    pub fold_stereo: bool,
+    pub normalize: bool,
+    pub encode: EncodeOptions,
+}
+
+/// One strict parser shared by CLI execution and host preflight before live-state capture.
+pub fn parse_bounce_request(e: &Engine, params: &Value) -> Result<(PathBuf, BounceRequest)> {
+    let object = params.as_object().ok_or_else(|| bounce_error("parameters must be an object"))?;
+    let allowed = [
+        "path",
+        "format",
+        "bit_depth",
+        "sample_rate",
+        "start",
+        "end",
+        "length",
+        "source",
+        "normalize",
+        "dither",
+        "fold_down",
+        "tail_samples",
+        "preroll_start",
+        "expected_revision",
+    ];
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err(bounce_error("unknown bounce parameter"));
+    }
+    if let Some(value) = params.get("expected_revision") {
+        let revision = value.as_u64().ok_or_else(|| bounce_error("expected_revision must be a nonnegative integer"))?;
+        if revision != e.revision {
+            return Err(bounce_error("session changed; refresh bounce settings"));
+        }
+    }
+    let path = params.get("path").and_then(Value::as_str).ok_or_else(|| bounce_error("path must be a string"))?;
+    if path.is_empty() || path.len() > 4096 || path.contains('\0') {
+        return Err(bounce_error("path must be nonempty, without NUL, and at most 4096 bytes"));
+    }
+    let mut positions = Vec::with_capacity(3);
+    for key in ["start", "end", "length"] {
+        let value = crate::cmd::position_param_raw(e, "file.bounce_mix", params, key)?;
+        if value.is_some_and(|value| !(-crate::cmd::MAX_POSITION..=crate::cmd::MAX_POSITION).contains(&value)) {
+            return Err(bounce_error("range exceeds the supported position limit"));
+        }
+        positions.push(value);
+    }
+    let start = positions.first().copied().flatten();
+    let end = positions.get(1).copied().flatten();
+    let length = positions.get(2).copied().flatten();
+    let range = match (start, end, length) {
+        (Some(start), Some(end), None) => Range::new(start, end),
+        (Some(start), None, Some(length)) if length > 0 => Range::new(
+            start,
+            start.checked_add(length).filter(|end| *end <= crate::cmd::MAX_POSITION).ok_or_else(|| bounce_error("range end overflow"))?,
+        ),
+        (None, None, None) => {
+            let range = e.session().edit.selection;
+            if range.is_empty() { Range::new(0, e.session().content_end().max(1)) } else { range }
+        }
+        _ => return Err(bounce_error("supply start/end, start/positive length, or no explicit range")),
+    };
+    let tail_samples = match params.get("tail_samples") {
+        Some(value) => value.as_i64().ok_or_else(|| bounce_error("tail_samples must be an integer"))?,
+        None => 0,
+    };
+    let preroll_start = match params.get("preroll_start") {
+        Some(value) => value.as_i64().ok_or_else(|| bounce_error("preroll_start must be an integer"))?,
+        None => range.start,
+    };
+    if !(0..=crate::cmd::MAX_POSITION).contains(&tail_samples) || !(-crate::cmd::MAX_POSITION..=range.start).contains(&preroll_start) {
+        return Err(bounce_error("tail/preroll positions are outside the supported range"));
+    }
+    let sample_rate = match params.get("sample_rate") {
+        Some(value) => {
+            SampleRate::new(value.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or_else(|| bounce_error("sample_rate must be integer Hz"))?)
+                .map_err(|err| bounce_error(&err.to_string()))?
+        }
+        None => e.session().sample_rate,
+    };
+    let ext = Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("wav");
+    let format_name = match params.get("format") {
+        Some(value) => value.as_str().ok_or_else(|| bounce_error("format must be a string"))?,
+        None => ext,
+    };
+    let format = soundcraft_audio_io::encode_format_for(format_name).ok_or_else(|| bounce_error("supported: wav, aiff, flac"))?;
+    let bit_depth = match params.get("bit_depth") {
+        None => soundcraft_audio_io::BitDepth::Int24,
+        Some(value) => match (value.as_i64(), value.as_str()) {
+            (Some(16), _) | (_, Some("16")) => soundcraft_audio_io::BitDepth::Int16,
+            (Some(24), _) | (_, Some("24")) => soundcraft_audio_io::BitDepth::Int24,
+            (Some(32), _) | (_, Some("32" | "32f")) => soundcraft_audio_io::BitDepth::Float32,
+            _ => return Err(bounce_error("bit_depth must be 16, 24 or 32f")),
+        },
+    };
+    let boolean = |key: &str, default| -> Result<bool> {
+        params.get(key).map_or(Ok(default), |value| value.as_bool().ok_or_else(|| bounce_error("normalize/dither must be booleans")))
+    };
+    let fold_stereo = match params.get("fold_down") {
+        None => false,
+        Some(value) => match value.as_str() {
+            Some("stereo") => true,
+            Some("none" | "") => false,
+            _ => return Err(bounce_error("fold_down must be stereo or none")),
+        },
+    };
+    let bus = match params.get("source") {
+        None => None,
+        Some(value) => {
+            let name = value.as_str().ok_or_else(|| bounce_error("source must be a bus name or main"))?;
+            if name.eq_ignore_ascii_case("main") { None } else { Some(e.session().bus_by_name(name).ok_or_else(|| bounce_error("unknown bus"))?.id) }
+        }
+    };
+    let request = BounceRequest {
+        range,
+        tail_samples,
+        preroll_start,
+        sample_rate,
+        bus,
+        fold_stereo,
+        normalize: boolean("normalize", false)?,
+        encode: EncodeOptions { format, bit_depth, dither: boolean("dither", true)?, bwf: None },
+    };
+    plan_bounce(e.session(), &request)?;
+    Ok((PathBuf::from(path), request))
+}
+
+/// Allocation/work admission without creating processors, rendering or writing files.
+#[derive(Debug, Clone)]
+pub struct BouncePlan {
+    pub input_range: Range,
+    pub tail_samples: Samples,
+    pub preroll_start: Samples,
+    pub session_frames: usize,
+    pub frames: usize,
+    pub channels: usize,
+    pub processing_frames: usize,
+    pub sample_rate: SampleRate,
+}
+
+pub fn plan_bounce(s: &Session, request: &BounceRequest) -> Result<BouncePlan> {
+    SampleRate::new(s.sample_rate.hz()).map_err(|err| bounce_error(&err.to_string()))?;
+    if request.tail_samples < 0 || request.preroll_start > request.range.start {
+        return Err(bounce_error("tail must be nonnegative and preroll must not follow the capture start"));
+    }
+    request
+        .range
+        .end
+        .checked_sub(request.range.start)
+        .filter(|n| *n > 0)
+        .ok_or_else(|| bounce_error("capture range must be positive and non-overflowing"))?;
+    let end = request.range.end.checked_add(request.tail_samples).ok_or_else(|| bounce_error("tail timeline overflow"))?;
+    let processing = end.checked_sub(request.preroll_start).filter(|n| *n > 0).ok_or_else(|| bounce_error("preroll processing range overflow"))?;
+    if processing > s.sample_rate.samples(4.0 * 3600.0) {
+        return Err(bounce_error("capture, preroll and tail processing are limited to 4 hours"));
+    }
+    let (session_frames, frames, channels) =
+        bounce_plan(s, Range::new(request.range.start, end), request.fold_stereo, request.bus, request.sample_rate)?;
+    let processing_frames = usize::try_from(processing).map_err(|_| bounce_error("preroll span exceeds platform limits"))?;
+    let working_channels =
+        request.bus.and_then(|bus| s.bus(bus).map(|b| b.format.channels())).unwrap_or_else(|| soundcraft_mix::main_channels(s)).max(2);
+    if processing_frames.checked_mul(working_channels).is_none_or(|n| n > soundcraft_mix::MAX_RENDER_SAMPLES) {
+        return Err(bounce_error("capture, preroll and tail exceed offline processing bounds"));
+    }
+    if request.encode.format == FileFormat::Flac {
+        if channels > 8 || request.sample_rate.hz() > 655_350 {
+            return Err(bounce_error("FLAC delivery supports at most eight channels and 655350 Hz"));
+        }
+        if request.encode.bit_depth == soundcraft_audio_io::BitDepth::Float32 {
+            return Err(bounce_error(&soundcraft_audio_io::AudioError::Unsupported("FLAC cannot store 32-bit float samples".into()).to_string()));
+        }
+    }
+    if !matches!(request.encode.format, FileFormat::Wav | FileFormat::Aiff | FileFormat::Flac) {
+        return Err(bounce_error("unsupported bounce encoding format"));
+    }
+    let bytes_per_sample = match request.encode.bit_depth {
+        soundcraft_audio_io::BitDepth::Int16 => 2u64,
+        soundcraft_audio_io::BitDepth::Int24 => 3,
+        _ => 4,
+    };
+    let encoded_bound =
+        (frames as u64).checked_mul(channels as u64).and_then(|n| n.checked_mul(bytes_per_sample)).and_then(|n| n.checked_add(1 << 20));
+    if encoded_bound.is_none_or(|n| n > crate::bounce_delivery::MAX_DELIVERY_BYTES) {
+        return Err(bounce_error("encoded bounce exceeds delivery byte limit"));
+    }
+    Ok(BouncePlan {
+        input_range: request.range,
+        tail_samples: request.tail_samples,
+        preroll_start: request.preroll_start,
+        session_frames,
+        frames,
+        channels,
+        processing_frames,
+        sample_rate: request.sample_rate,
+    })
+}
+
 /// Encoded delivery and measurements of its final, output-rate signal.
 #[derive(Debug)]
 pub struct BounceOutput {
@@ -271,10 +475,13 @@ pub struct BounceOutput {
     pub stats: (f32, f32, f32),
     pub sample_rate: SampleRate,
     pub frames: usize,
+    pub channels: usize,
+    pub input_range: Range,
+    pub tail_samples: Samples,
+    pub preroll_start: Samples,
 }
 
-/// Render and process at the session rate, then convert once before normalization, metering,
-/// and final encoding. The session and its source audio remain unchanged.
+/// Legacy byte helper: retain its cold-selection/no-extra-tail policy explicitly.
 pub fn bounce_source_at_rate(
     e: &Engine,
     r: Range,
@@ -284,30 +491,76 @@ pub fn bounce_source_at_rate(
     bus: Option<BusId>,
     sample_rate: SampleRate,
 ) -> Result<BounceOutput> {
+    bounce_request(
+        e,
+        &BounceRequest { range: r, tail_samples: 0, preroll_start: r.start, sample_rate, bus, fold_stereo, normalize, encode: opts.clone() },
+    )
+}
+
+pub fn bounce_request(e: &Engine, request: &BounceRequest) -> Result<BounceOutput> {
     let s = e.session();
-    let (source_frames, frames, channels) = bounce_plan(s, r, fold_stereo, bus, sample_rate)?;
-    let (mut ch, fmt) = render_bounce(s, r, fold_stereo, bus)?;
-    let shape_ok = |ch: &[Vec<f32>], frames| ch.len() == channels && ch.iter().all(|c| c.len() == frames);
-    if !shape_ok(&ch, source_frames) {
-        return Err(bounce_error("renderer did not deliver the complete requested channel/frame shape"));
+    let plan = plan_bounce(s, request)?;
+    let window = soundcraft_mix::RenderWindow { range: request.range, tail_samples: request.tail_samples, preroll_start: request.preroll_start };
+    let mut ch = soundcraft_mix::try_render_window(e.session_arc(), request.bus, window, 1024).map_err(|error| bounce_error(&error.to_string()))?;
+    let mut format = request
+        .bus
+        .and_then(|id| s.bus(id).map(|bus| bus.format))
+        .unwrap_or_else(|| if ch.len() <= 2 { ChannelFormat::Stereo } else { s.main_format() });
+    if request.fold_stereo && ch.len() > 2 {
+        ch = soundcraft_mix::fold_down_stereo(format, &ch);
+        format = ChannelFormat::Stereo;
     }
-    if sample_rate != s.sample_rate {
-        ch = soundcraft_dsp::offline::resample_to_frames(&ch, s.sample_rate.hz(), sample_rate.hz(), frames).map_err(bounce_error)?;
-        if !shape_ok(&ch, frames) {
-            return Err(bounce_error("sample-rate conversion did not deliver the complete requested channel/frame shape"));
-        }
+    let shape_ok = |audio: &[Vec<f32>], frames| {
+        audio.len() == plan.channels && audio.iter().all(|channel| channel.len() == frames && channel.iter().all(|sample| sample.is_finite()))
+    };
+    if !shape_ok(&ch, plan.session_frames) {
+        return Err(bounce_error("renderer did not deliver complete finite requested channels/frames"));
     }
-    if normalize {
+    if request.sample_rate != s.sample_rate {
+        ch = soundcraft_dsp::offline::resample_to_frames(&ch, s.sample_rate.hz(), request.sample_rate.hz(), plan.frames).map_err(bounce_error)?;
+    }
+    if request.normalize {
         soundcraft_dsp::offline::normalize(&mut ch, -0.1, false);
     }
+    if !shape_ok(&ch, plan.frames) {
+        return Err(bounce_error("delivery did not retain complete finite requested channels/frames"));
+    }
     let peak = soundcraft_dsp::offline::peak_db(&ch);
-    let mut lm = soundcraft_dsp::meter::LoudnessMeter::new(sample_rate.as_f64() as f32, ch.len());
-    lm.process(&ch, frames);
-    let lufs = lm.integrated_lufs();
-    let true_peak = lm.true_peak_db();
-    let buf = AudioBuffer { sample_rate: sample_rate.hz(), channels: ch };
-    let bytes = soundcraft_audio_io::encode_with_channel_mask(&buf, opts, fmt.channel_mask()).map_err(|err| EngineError::Io(err.to_string()))?;
-    Ok(BounceOutput { bytes, stats: (peak, lufs, true_peak), sample_rate, frames })
+    let mut meter = soundcraft_dsp::meter::LoudnessMeter::new(request.sample_rate.as_f64() as f32, ch.len());
+    meter.process(&ch, plan.frames);
+    let stats = (peak, meter.integrated_lufs(), meter.true_peak_db());
+    let buffer = AudioBuffer { sample_rate: request.sample_rate.hz(), channels: ch };
+    let bytes = soundcraft_audio_io::encode_with_channel_mask(&buffer, &request.encode, format.channel_mask())
+        .map_err(|err| EngineError::Io(err.to_string()))?;
+    let extension = match request.encode.format {
+        FileFormat::Wav => "wav",
+        FileFormat::Aiff => "aiff",
+        FileFormat::Flac => "flac",
+        _ => "audio",
+    };
+    let info = soundcraft_audio_io::probe(&bytes, Some(extension)).map_err(|err| EngineError::Io(err.to_string()))?;
+    if info.sample_rate != request.sample_rate.hz() || info.channels as usize != plan.channels || info.frames != plan.frames as u64 {
+        return Err(bounce_error("encoded header differs from requested delivery rate/channels/frames"));
+    }
+    Ok(BounceOutput {
+        bytes,
+        stats,
+        sample_rate: request.sample_rate,
+        frames: plan.frames,
+        channels: plan.channels,
+        input_range: request.range,
+        tail_samples: request.tail_samples,
+        preroll_start: request.preroll_start,
+    })
+}
+
+/// Validate the destination before expensive preparation/rendering; publish only complete encoded bytes.
+pub fn deliver_bounce(e: &Engine, path: &Path, request: &BounceRequest) -> Result<(BounceOutput, crate::bounce_delivery::DeliveryReceipt)> {
+    let destination = crate::bounce_delivery::prepare_destination(e.session(), path)?;
+    let output = bounce_request(e, request)?;
+    let staged = crate::bounce_delivery::stage(destination, &output.bytes)?;
+    let receipt = crate::bounce_delivery::publish(staged)?;
+    Ok((output, receipt))
 }
 
 fn bounce_error(message: &str) -> EngineError {
@@ -327,7 +580,7 @@ fn bounce_plan(s: &Session, r: Range, fold: bool, bus: Option<BusId>, rate: Samp
         return Err(bounce_error("bounces are limited to 4 hours"));
     }
     let render_channels = match bus {
-        Some(id) => s.bus(id).ok_or_else(|| bounce_error("unknown bounce bus"))?.format.channels(),
+        Some(id) => s.bus(id).ok_or_else(|| bounce_error("unknown bus"))?.format.channels(),
         None => {
             if s.outputs.first().is_some_and(|output| output.format.channels() > soundcraft_mix::MAX_CHANNELS) {
                 return Err(bounce_error("bounce rendering supports at most 16 channels"));

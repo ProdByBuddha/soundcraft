@@ -256,7 +256,7 @@ pub fn position_param(e: &Engine, cmd: &str, p: &Value, key: &str) -> Result<Opt
     Ok(position_param_raw(e, cmd, p, key)?.map(|v| v.clamp(-MAX_POSITION, MAX_POSITION)))
 }
 
-fn position_param_raw(e: &Engine, cmd: &str, p: &Value, key: &str) -> Result<Option<Samples>> {
+pub(crate) fn position_param_raw(e: &Engine, cmd: &str, p: &Value, key: &str) -> Result<Option<Samples>> {
     let Some(v) = p.get(key) else { return Ok(None) };
     let s = e.session();
     if let Some(n) = v.as_i64() {

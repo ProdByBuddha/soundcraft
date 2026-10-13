@@ -36,6 +36,7 @@ use soundcraft_model::TrackId;
 use soundcraft_playback::Player;
 use soundcraft_time::{Range, Samples};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 pub use control::ControlRequest;
@@ -352,6 +353,53 @@ impl SoundApp {
         if let Some(r) = menus::run_ui_command(self, id, &params) {
             return r;
         }
+        if id == "file.bounce_mix" {
+            let result: Result<Value, String> = (|| {
+                // Validate the original document and destination before asking a live processor
+                // to serialize state. The export engine is detached from history and recovery.
+                let (path, request) = soundcraft_engine::io::parse_bounce_request(&self.engine, &params).map_err(|e| e.to_string())?;
+                soundcraft_engine::io::plan_bounce(self.engine.session(), &request).map_err(|e| e.to_string())?;
+                #[cfg(not(target_arch = "wasm32"))]
+                soundcraft_engine::bounce_delivery::prepare_destination(self.engine.session(), &path).map_err(|e| e.to_string())?;
+                #[cfg(target_arch = "wasm32")]
+                let _ = path;
+                let source = self.engine.session_arc();
+                let generation = self.engine.session_generation();
+                let live = self.player.is_some();
+                let snapshot = match &self.player {
+                    Some(player) => player.capture_export_state(Arc::clone(&source), generation).map_err(|e| e.to_string())?,
+                    None => soundcraft_playback::ExportSnapshot { states: Vec::new(), static_baselines: Vec::new(), editor_edits: Vec::new() },
+                };
+                if !Arc::ptr_eq(&source, &self.engine.session_arc()) || generation != self.engine.session_generation() {
+                    return Err("document changed during export state capture".into());
+                }
+                let mut copy = detached_export(&self.engine, snapshot)?;
+                let mut copy_params = params.clone();
+                if let Some(object) = copy_params.as_object_mut() {
+                    // Freshness was checked against the original, not the detached revision.
+                    object.remove("expected_revision");
+                }
+                let mut receipt = copy.execute(id, &copy_params).map_err(|e| e.to_string())?;
+                if let Some(object) = receipt.as_object_mut() {
+                    object.insert(
+                        "plugin_state".into(),
+                        json!(if live && !cfg!(target_arch = "wasm32") { "captured_document_bound" } else { "stored_document" }),
+                    );
+                }
+                Ok(receipt)
+            })();
+            match &result {
+                Ok(value) => {
+                    self.ui.status = if cfg!(target_arch = "wasm32") {
+                        "Bounce download requested".into()
+                    } else {
+                        format!("Bounced {} frames to {}", value["frames"], value["path"].as_str().unwrap_or_default())
+                    };
+                }
+                Err(error) => self.ui.status = error.clone(),
+            }
+            return result;
+        }
         if id == "session.save_copy" {
             soundcraft_engine::session_copy::check_revision(&self.engine, params.get("expected_revision")).map_err(|err| err.to_string())?;
             let mut copy_params = params.clone();
@@ -374,7 +422,10 @@ impl SoundApp {
         match self.engine.execute(id, &params) {
             Ok(v) => {
                 if matches!(id, "session.new" | "session.open" | "session.close" | "session.revert") {
-                    if matches!(self.dialogs.open, Some(dialogs::Dialog::RelinkAudio { .. } | dialogs::Dialog::SaveCopy { .. })) {
+                    if matches!(
+                        self.dialogs.open,
+                        Some(dialogs::Dialog::Bounce { .. } | dialogs::Dialog::RelinkAudio { .. } | dialogs::Dialog::SaveCopy { .. })
+                    ) {
                         self.dialogs.open = None;
                     }
                     self.dialogs.clear_batch_rename();
@@ -572,11 +623,15 @@ impl SoundApp {
     fn apply_editor_edits(&mut self) {
         let Some(p) = &self.player else { return };
         for (t, slot, param, value) in p.idle() {
-            if slot == soundcraft_mix::INSTRUMENT_SLOT {
-                continue;
-            }
             let key = format!("param:{}:{slot}:{param}", t.0);
-            let _ = self.engine.execute_merged("mix.insert_param", &json!({"track": t.0, "slot": slot, "param": param, "value": value}), &key);
+            let (command, params) = if slot == soundcraft_mix::INSTRUMENT_SLOT {
+                ("mix.instrument_param", json!({"track": t.0, "param": param, "value": value}))
+            } else {
+                ("mix.insert_param", json!({"track": t.0, "slot": slot, "param": param, "value": value}))
+            };
+            if let Err(error) = self.engine.execute_merged(command, &params, &key) {
+                log::warn!("storing editor parameter: {error}");
+            }
         }
     }
 
@@ -749,7 +804,7 @@ impl SoundApp {
         for r in reqs {
             match r {
                 TransportRequest::ResetSession => {
-                    if matches!(self.dialogs.open, Some(dialogs::Dialog::TrackBounce(_))) {
+                    if matches!(self.dialogs.open, Some(dialogs::Dialog::Bounce { .. } | dialogs::Dialog::TrackBounce(_))) {
                         self.dialogs.open = None;
                     }
                     if let Some(p) = &self.player {
@@ -1022,6 +1077,36 @@ fn detached_copy(original: &Engine, states: Vec<(TrackId, usize, Vec<u8>)>) -> R
     Ok(copy)
 }
 
+/// Apply actual pending editor gestures only to the detached snapshot. A serialized Read
+/// automation value never replaces a stored static parameter unless an editor supplied an edit.
+fn detached_export(original: &Engine, snapshot: soundcraft_playback::ExportSnapshot) -> Result<Engine, String> {
+    let mut copy = detached_copy(original, snapshot.states)?;
+    for (track, slot, param, value) in snapshot.static_baselines {
+        if !value.is_finite() || param.is_empty() || param.len() > 4096 {
+            return Err("invalid captured static parameter".into());
+        }
+        let track = copy.session_mut().track_mut(track).ok_or("captured track no longer exists")?;
+        let insert = if slot == soundcraft_mix::INSTRUMENT_SLOT {
+            track.instrument.as_mut()
+        } else {
+            track.mixer.inserts.get_mut(slot).and_then(Option::as_mut)
+        }
+        .ok_or("captured plugin no longer exists")?;
+        insert.params.entry(param).or_insert(value);
+    }
+    for (track, slot, param, value) in snapshot.editor_edits {
+        if !value.is_finite() || param.is_empty() || param.len() > 4096 {
+            return Err("invalid captured editor parameter".into());
+        }
+        if slot == soundcraft_mix::INSTRUMENT_SLOT {
+            copy.execute("mix.instrument_param", &json!({"track": track.0, "param": param, "value": value})).map_err(|e| e.to_string())?;
+        } else {
+            copy.execute("mix.insert_param", &json!({"track": track.0, "slot": slot, "param": param, "value": value})).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(copy)
+}
+
 fn feed_meter(d: &mut MeterDisplay, peak: [f32; 2], gr: f32, dt: f32) {
     // Instant attack, ~26 dB/s release, 2 s peak hold.
     let fall = 10f32.powf(-26.0 * dt / 20.0);
@@ -1068,6 +1153,67 @@ mod tests {
         assert!(e.session().track(track).unwrap().mixer.inserts[0].as_ref().unwrap().state.is_none());
     }
     use serde_json::json;
+
+    #[test]
+    fn detached_export_keeps_explicit_static_values_and_applies_editor_changes_after_missing_key_baselines() {
+        let mut session = soundcraft_model::Session::default();
+        let track = session.add_track(soundcraft_model::TrackKind::Audio, soundcraft_model::ChannelFormat::Stereo, Some("Static seeds"));
+        let tr = session.track_mut(track).unwrap();
+        for slot in 0..3 {
+            tr.mixer.inserts[slot] = Some(soundcraft_model::Insert::new("gain"));
+        }
+        tr.mixer.inserts[0].as_mut().unwrap().params.insert("gain".into(), -6.0);
+        let mut original = soundcraft_engine::Engine::new(session);
+        original.execute("track.new", &json!({"name":"Still redoable"})).unwrap();
+        assert!(original.undo());
+        let before = original.session_arc();
+        let revision = original.revision;
+        let history = original.undo_history();
+        let journal = original.journal.clone();
+        let dirty = original.is_dirty();
+        let copy = super::detached_export(
+            &original,
+            soundcraft_playback::ExportSnapshot {
+                states: Vec::new(),
+                static_baselines: vec![(track, 0, "gain".into(), 3.0), (track, 1, "gain".into(), -2.0), (track, 2, "gain".into(), -4.0)],
+                editor_edits: vec![(track, 1, "gain".into(), -12.0)],
+            },
+        )
+        .unwrap();
+        let inserts = &copy.session().track(track).unwrap().mixer.inserts;
+        assert_eq!(inserts[0].as_ref().unwrap().params["gain"], -6.0);
+        assert_eq!(inserts[1].as_ref().unwrap().params["gain"], -12.0);
+        assert_eq!(inserts[2].as_ref().unwrap().params["gain"], -4.0);
+        assert!(original.session().track(track).unwrap().mixer.inserts[1].as_ref().unwrap().params.is_empty());
+        assert!(std::sync::Arc::ptr_eq(&before, &original.session_arc()));
+        assert_eq!((original.revision, original.undo_history(), original.journal.clone(), original.is_dirty()), (revision, history, journal, dirty));
+        assert!(original.redo());
+        assert!(original.session().track_by_name("Still redoable").is_some());
+    }
+
+    #[test]
+    fn detached_instrument_gesture_overrides_static_seed_without_editing_the_open_instrument() {
+        let mut original = soundcraft_engine::Engine::default();
+        original.execute("track.new", &json!({"kind":"instrument", "name":"Original instrument"})).unwrap();
+        let track = original.session().tracks[0].id;
+        original.execute("mix.instrument_param", &json!({"track":track, "param":"cutoff", "value":1000.0})).unwrap();
+        let before = original.session_arc();
+        let revision = original.revision;
+        let copy = super::detached_export(
+            &original,
+            soundcraft_playback::ExportSnapshot {
+                states: Vec::new(),
+                static_baselines: vec![(track, soundcraft_mix::INSTRUMENT_SLOT, "cutoff".into(), 5000.0)],
+                editor_edits: vec![(track, soundcraft_mix::INSTRUMENT_SLOT, "cutoff".into(), 7000.0)],
+            },
+        )
+        .unwrap();
+        assert_eq!(copy.session().track(track).unwrap().instrument.as_ref().unwrap().params["cutoff"], 7000.0);
+        assert_eq!(original.session().track(track).unwrap().instrument.as_ref().unwrap().params["cutoff"], 1000.0);
+        assert!(std::sync::Arc::ptr_eq(&before, &original.session_arc()));
+        assert_eq!(original.revision, revision);
+        assert_eq!(original.undo_label(), Some("Set Instrument Parameter"));
+    }
 
     #[test]
     fn new_session_stops_playback_and_the_old_clock() {

@@ -127,6 +127,38 @@ fn workspace_budget(source: &Session, block: usize) -> Result<WorkspaceBudget, P
     Ok(budget)
 }
 
+/// Every latency-producing clip chain and dry peer is aligned to the track's maximum.
+/// Ring storage is admitted before allocation; effect-owned DSP storage is separate.
+fn prepare_clip_alignment(track: &Track, strip: &mut Strip, enabled: bool, rate: f32, budget: &mut WorkspaceBudget) -> Result<(), PreparationError> {
+    let mut maximum = 0usize;
+    if enabled && track.kind == TrackKind::Audio {
+        for fx in strip.clip_fx.values() {
+            maximum = maximum.max(fx.latency()?);
+        }
+    }
+    strip.clip_latency = maximum;
+    if maximum > 0 {
+        for clip in track.clips().iter().filter(|clip| clip.is_audio()) {
+            if !strip.clip_fx.contains_key(&clip.id.0) {
+                budget.charge(1, size_of::<ClipFx>() + 128)?;
+                strip.clip_fx.insert(clip.id.0, ClipFx::new(rate, strip.buf.len()));
+            }
+        }
+    }
+    for fx in strip.clip_fx.values_mut() {
+        let delay = if enabled { maximum.checked_sub(fx.latency()?).ok_or(PreparationError("ClipFX arrival mismatch"))? } else { 0 };
+        budget.charge(delay.checked_mul(fx.ch).ok_or(PreparationError("ClipFX workspace overflow"))?, size_of::<f32>())?;
+        budget.charge(fx.ch, size_of::<Vec<f32>>())?;
+        if fx.align.bufs.len() != fx.ch || fx.align.bufs.iter().any(|channel| channel.len() < delay) {
+            fx.align.reserve(delay, fx.ch)?;
+        }
+        if !fx.align.set(delay, fx.ch) {
+            return Err(PreparationError("ClipFX alignment exceeds prepared capacity"));
+        }
+    }
+    Ok(())
+}
+
 /// Preparation/rendering failures contain no plugin-owned strings or callback allocations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PreparationError(pub &'static str);
@@ -458,7 +490,6 @@ impl SessionPreparer {
                 .and_then(|vca| prepared.tracks.get(&vca.id).cloned().map(|auto| (vca.mixer.volume_db, auto)));
             strip.buf = vec![vec![0.0; engine.max_block]; ch];
             strip.pre = vec![vec![0.0; engine.max_block]; ch];
-            strip.outbuf = vec![vec![0.0; engine.max_block]; ch];
             strip.clipbuf = vec![vec![0.0; engine.max_block]; ch];
             strip.scratch = vec![0.0; engine.max_block];
             strip.held = Vec::with_capacity(128);
@@ -478,6 +509,8 @@ impl SessionPreparer {
                     strip.clip_fx.insert(clip.id.0, fx);
                 }
             }
+            prepare_clip_alignment(t, &mut strip, s.edit.delay_compensation, sr, &mut budget)?;
+            strip.latency = strip.clip_latency;
             engine.meters.insert(t.id, StripMeter { peaks: vec![0.0; ch], ..StripMeter::default() });
             engine.strips.insert(t.id, strip);
         }
@@ -488,6 +521,18 @@ impl SessionPreparer {
             let seed = catalog.remove(&key).filter(|seed| seed.id == ins.plugin && seed.ch == ch);
             if let Some(seed) = seed {
                 let automation = PluginAutomation::prepare(&seed, ins, auto, index, engine.max_block)?;
+                if ins.active
+                    && !ins.bypass
+                    && (index != INSTRUMENT_SLOT || s.track(track).is_some_and(|track| matches!(track.kind, TrackKind::Instrument | TrackKind::Midi)))
+                {
+                    let latency = automation.static_latency(sr).unwrap_or(seed.latency);
+                    let strip = engine.strips.get_mut(&track).ok_or(PreparationError("missing prepared strip"))?;
+                    strip.latency = strip
+                        .latency
+                        .checked_add(latency)
+                        .filter(|latency| *latency <= (1 << 20))
+                        .ok_or(PreparationError("prepared strip latency exceeds limit"))?;
+                }
                 retained.push(RetainedSlot { track, index, seed: Arc::clone(&seed), automation });
                 next_catalog.insert(key, seed);
             } else {
@@ -504,9 +549,22 @@ impl SessionPreparer {
                     .prepare_automation(seed.params.len(), soundcraft_dsp::MAX_AUTOMATION_NOTES)
                     .map_err(|_| PreparationError("plugin automation capacity preparation failed"))?;
                 let automation = PluginAutomation::prepare(&seed, ins, auto, index, engine.max_block)?;
+                if ins.active
+                    && !ins.bypass
+                    && (index != INSTRUMENT_SLOT || s.track(track).is_some_and(|track| matches!(track.kind, TrackKind::Instrument | TrackKind::Midi)))
+                {
+                    let latency = automation.static_latency(sr).unwrap_or(seed.latency);
+                    let strip = engine.strips.get_mut(&track).ok_or(PreparationError("missing prepared strip"))?;
+                    strip.latency = strip
+                        .latency
+                        .checked_add(latency)
+                        .filter(|latency| *latency <= (1 << 20))
+                        .ok_or(PreparationError("prepared strip latency exceeds limit"))?;
+                }
                 let slot = PluginSlot { id: ins.plugin.clone(), ch, plugin, seed: Arc::clone(&seed), automation };
                 if let Some(st) = engine.strips.get_mut(&track) {
                     if index == INSTRUMENT_SLOT {
+                        st.instrument_release_pending = !ins.active || ins.bypass;
                         st.instrument = Some(slot);
                     } else if let Some(dst) = st.plugins.get_mut(index) {
                         *dst = Some(slot);
@@ -521,12 +579,21 @@ impl SessionPreparer {
             .try_fold(0usize, |sum, seed| sum.checked_add(seed.latency_capacity(sr)))
             .filter(|latency| *latency <= (1 << 20))
             .ok_or(PreparationError("latency overflow or capacity exceeded"))?;
+        let latency = engine
+            .strips
+            .values()
+            .try_fold(latency, |total, strip| total.checked_add(strip.clip_latency))
+            .filter(|latency| *latency <= (1 << 20))
+            .ok_or(PreparationError("ClipFX aggregate latency exceeds prepared limit"))?;
+        budget.charge(pdc::workspace_bytes(s, if s.edit.delay_compensation { latency } else { 0 }, block)?, 1)?;
+        let plan = pdc::Plan::compile(s, &engine.strips, sr, latency)?;
+        if s.edit.delay_compensation {
+            engine.order = plan.processing_order();
+        }
+        plan.install_edges(s, &mut engine.strips, block)?;
+        engine.latency = plan.output_latency(None)?;
+        engine.pdc = Some(plan);
         for (id, st) in &mut engine.strips {
-            let ch = st.buf.len();
-            budget.charge(ch.checked_mul(latency).ok_or(PreparationError("PDC workspace overflow"))?, 12)?;
-            st.align.reserve(latency, ch);
-            st.align_pre.reserve(latency, ch);
-            st.out_extra.reserve(latency, ch);
             if let Some(t) = s.track(*id) {
                 st.rtp = midi_properties(s, t);
                 sync_sample(st, t.instrument.as_ref(), s);
@@ -545,6 +612,100 @@ impl SessionPreparer {
 }
 
 impl MixEngine {
+    /// Whether the installed immutable pair belongs to this exact document and lifetime.
+    /// A value-equal clone or an unsuccessful installation does not satisfy the binding.
+    pub fn is_prepared_for(&self, source: &Arc<Session>, lifetime: u64) -> bool {
+        self.installation_error.is_none()
+            && self.prepared.as_ref().is_some_and(|prepared| prepared.lifetime == lifetime && Arc::ptr_eq(&prepared.source, source))
+    }
+
+    /// Trusted immutable initial values for active hosted parameters omitted by the model.
+    /// These are creation/restore baselines, not a processor's transient last Read target.
+    /// The exceptional export request allocates bounded returned IDs/records without vendor calls.
+    pub fn try_capture_static_baselines(&self) -> Result<Vec<(TrackId, usize, String, f32)>, PreparationError> {
+        if let Some(error) = self.installation_error {
+            return Err(error);
+        }
+        let source = self.prepared.as_ref().ok_or(PreparationError("no prepared mix snapshot"))?.source();
+        let mut slots = 0usize;
+        let mut records = 0usize;
+        let mut bytes = 0usize;
+        let mut out = Vec::new();
+        for track in source.tracks.iter().filter(|track| !track.inactive) {
+            let strip = self.strips.get(&track.id).ok_or(PreparationError("export baseline strip is unavailable"))?;
+            for (index, insert) in track
+                .mixer
+                .inserts
+                .iter()
+                .enumerate()
+                .filter_map(|(index, insert)| insert.as_ref().map(|insert| (index, insert)))
+                .chain(track.instrument.as_ref().map(|insert| (INSTRUMENT_SLOT, insert)))
+            {
+                if !insert.active || !is_third_party(&insert.plugin) {
+                    continue;
+                }
+                slots = slots
+                    .checked_add(1)
+                    .filter(|slots| *slots <= MAX_EXPORT_STATE_SLOTS)
+                    .ok_or(PreparationError("export baseline slot limit exceeded"))?;
+                let slot = if index == INSTRUMENT_SLOT { strip.instrument.as_ref() } else { strip.plugins.get(index).and_then(Option::as_ref) }
+                    .filter(|slot| slot.id == insert.plugin)
+                    .ok_or(PreparationError("required export baseline instance is unavailable"))?;
+                for parameter in slot.seed.params.iter().filter(|parameter| !insert.params.contains_key(parameter.info.id)) {
+                    let id = parameter.info.id;
+                    if id.len() > 4096 || !parameter.value.is_finite() {
+                        return Err(PreparationError("invalid export static baseline"));
+                    }
+                    records = records
+                        .checked_add(1)
+                        .filter(|records| *records <= (1 << 20))
+                        .ok_or(PreparationError("export baseline record limit exceeded"))?;
+                    bytes = bytes
+                        .checked_add(size_of::<(TrackId, usize, String, f32)>())
+                        .and_then(|bytes| bytes.checked_add(id.len()))
+                        .filter(|bytes| *bytes <= (64 << 20))
+                        .ok_or(PreparationError("export baseline byte limit exceeded"))?;
+                    out.try_reserve(1).map_err(|_| PreparationError("export baseline allocation failed"))?;
+                    let mut owned = String::new();
+                    owned.try_reserve_exact(id.len()).map_err(|_| PreparationError("export baseline ID allocation failed"))?;
+                    owned.push_str(id);
+                    out.push((track.id, index, owned, parameter.value));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Configure an export's absolute source cutoff without resetting ringing processors.
+    /// The default None leaves ordinary playback and specialized Track Bounce unchanged.
+    pub fn set_source_cutoff(&mut self, cutoff: Option<Samples>) -> Result<(), PreparationError> {
+        if let Some(error) = self.installation_error {
+            return Err(error);
+        }
+        if self.prepared.is_none() {
+            return Err(PreparationError("no prepared mix snapshot"));
+        }
+        self.source_cutoff = cutoff;
+        self.source_cutoff_started = false;
+        for strip in self.strips.values_mut() {
+            strip.skip_source = false;
+            strip.source_window = cutoff.is_some();
+            for fx in strip.clip_fx.values_mut() {
+                fx.window_active = false;
+                fx.window_block = None;
+            }
+        }
+        Ok(())
+    }
+
+    /// Prepared graph arrival at a named bus, or main plus serial Master latency.
+    pub fn prepared_output_latency(&self, bus: Option<BusId>) -> Result<usize, PreparationError> {
+        if let Some(error) = self.installation_error {
+            return Err(error);
+        }
+        self.pdc.as_ref().ok_or(PreparationError("no prepared compensation plan"))?.output_latency(bus)
+    }
+
     pub(super) fn prepare_compatibility(&mut self, source: &Session) -> Result<(), PreparationError> {
         let mut budget = workspace_budget(source, self.max_block)?;
         self.ensure_synced(source);
@@ -570,36 +731,37 @@ impl MixEngine {
                 let mut automation = PluginAutomation::prepare(&slot.seed, ins, &st.automation, INSTRUMENT_SLOT, self.max_block)?;
                 automation.retain_delivered(&slot.automation);
                 slot.automation = automation;
+                total_latency = total_latency.saturating_add(slot.seed.latency_capacity(self.sample_rate).max(slot.plugin.latency()));
             }
             st.rtp = midi_properties(source, t);
             st.scratch.resize(self.max_block, 0.0);
             st.pre = vec![vec![0.0; self.max_block]; st.buf.len()];
-            st.outbuf = vec![vec![0.0; self.max_block]; st.buf.len()];
             st.clipbuf = vec![vec![0.0; self.max_block]; st.buf.len()];
             for clip in t.clips() {
                 if let Some(params) = clip_fx_params(source, clip.id.0) {
                     let fx = st.clip_fx.entry(clip.id.0).or_insert_with(|| ClipFx::new(self.sample_rate, st.buf.len()));
                     fx.configure(&params);
-                } else {
-                    st.clip_fx.remove(&clip.id.0);
+                } else if let Some(fx) = st.clip_fx.get_mut(&clip.id.0) {
+                    fx.configure(&[]);
                 }
             }
+            st.clip_fx.retain(|id, _| t.clips().iter().any(|clip| clip.id.0 == *id));
+            prepare_clip_alignment(t, st, source.edit.delay_compensation, self.sample_rate, &mut budget)?;
+            total_latency = total_latency.checked_add(st.clip_latency).ok_or(PreparationError("ClipFX latency overflow"))?;
+            st.latency = pdc::own_latency(t, st, self.sample_rate)?;
             self.meters.entry(t.id).or_default().peaks.resize(st.buf.len(), 0.0);
         }
         if total_latency > (1 << 20) {
             return Err(PreparationError("latency exceeds prepared limit"));
         }
-        for st in self.strips.values() {
-            budget.charge(st.buf.len().checked_mul(total_latency).ok_or(PreparationError("PDC workspace overflow"))?, 12)?;
+        budget.charge(pdc::workspace_bytes(source, if source.edit.delay_compensation { total_latency } else { 0 }, self.max_block)?, 1)?;
+        let plan = pdc::Plan::compile(source, &self.strips, self.sample_rate, total_latency)?;
+        if source.edit.delay_compensation {
+            self.order = plan.processing_order();
         }
-        for st in self.strips.values_mut() {
-            let ch = st.buf.len();
-            for delay in [&mut st.align, &mut st.align_pre, &mut st.out_extra] {
-                if delay.bufs.len() != ch || delay.bufs.first().map_or(0, Vec::len) < total_latency {
-                    delay.reserve(total_latency, ch);
-                }
-            }
-        }
+        plan.install_edges(source, &mut self.strips, self.max_block)?;
+        self.latency = plan.output_latency(None)?;
+        self.pdc = Some(plan);
         self.main_meter.peaks.resize(self.main.len(), 0.0);
         self.work.reserve(source.tracks.len());
         self.prepared = Some(prepared);
@@ -612,6 +774,8 @@ impl MixEngine {
             && self.max_block == update.engine.max_block
             && self.prepared.as_ref().zip(update.engine.prepared.as_ref()).is_some_and(|(a, b)| a.lifetime == b.lifetime);
         for retained in &mut update.retained {
+            let previous_instrument_state =
+                self.strips.get(&retained.track).map(|strip| (strip.instrument_enabled, strip.instrument_release_pending));
             let old = self.strips.get_mut(&retained.track).and_then(|s| {
                 if retained.index == INSTRUMENT_SLOT { s.instrument.take() } else { s.plugins.get_mut(retained.index).and_then(Option::take) }
             });
@@ -631,6 +795,10 @@ impl MixEngine {
                 std::mem::swap(&mut old.automation, &mut retained.automation);
                 if let Some(st) = update.engine.strips.get_mut(&retained.track) {
                     if retained.index == INSTRUMENT_SLOT {
+                        if let Some((enabled, release_pending)) = previous_instrument_state {
+                            st.instrument_enabled = enabled;
+                            st.instrument_release_pending = release_pending;
+                        }
                         st.instrument = Some(old);
                     } else if let Some(dst) = st.plugins.get_mut(retained.index) {
                         *dst = Some(old);
@@ -651,7 +819,13 @@ impl MixEngine {
                             && fx.ch == previous.ch
                             && fx.configured == previous.configured
                         {
-                            std::mem::swap(fx, previous);
+                            if fx.align.len == previous.align.len {
+                                std::mem::swap(fx, previous);
+                            } else {
+                                // Keep the unchanged processors but use the new prepared alignment.
+                                std::mem::swap(&mut fx.eq, &mut previous.eq);
+                                std::mem::swap(&mut fx.comp, &mut previous.comp);
+                            }
                         }
                     }
                     std::mem::swap(&mut st.held, &mut old.held);
@@ -660,11 +834,12 @@ impl MixEngine {
                     if !same_sample && let Some(instrument) = &mut st.instrument {
                         instrument.plugin.set_sample(st.sample_source.clone());
                     }
-                    for (dst, src) in
-                        [(&mut st.align, &mut old.align), (&mut st.align_pre, &mut old.align_pre), (&mut st.out_extra, &mut old.out_extra)]
-                    {
-                        if src.bufs.first().map_or(0, Vec::len) >= dst.bufs.first().map_or(0, Vec::len) && src.bufs.len() == dst.bufs.len() {
-                            std::mem::swap(dst, src);
+                    if let (Some(new), Some(previous)) = (&mut st.output_edge, &mut old.output_edge) {
+                        new.retain_from(previous);
+                    }
+                    for (new, previous) in st.send_edges.iter_mut().zip(&mut old.send_edges) {
+                        if let (Some(new), Some(previous)) = (new, previous) {
+                            new.retain_from(previous);
                         }
                     }
                 }
@@ -680,12 +855,87 @@ impl MixEngine {
     }
 
     pub fn render_prepared(&mut self, pos: Samples, frames: usize, out: &mut [Vec<f32>]) -> Result<(), PreparationError> {
+        self.render_prepared_output_inner(pos, frames, None, out, false)
+    }
+
+    /// Render one output through the installed pair, splitting a source cutoff exactly.
+    /// All buffers were prepared by the control owner; this method allocates no span scratch.
+    pub fn render_prepared_output(&mut self, pos: Samples, frames: usize, bus: Option<BusId>, out: &mut [Vec<f32>]) -> Result<(), PreparationError> {
+        self.render_prepared_output_inner(pos, frames, bus, out, true)
+    }
+
+    fn render_prepared_output_inner(
+        &mut self,
+        pos: Samples,
+        frames: usize,
+        bus: Option<BusId>,
+        out: &mut [Vec<f32>],
+        strict_finite: bool,
+    ) -> Result<(), PreparationError> {
         if frames > self.max_block || out.iter().any(|channel| channel.len() < frames) {
             return Err(PreparationError("render span exceeds prepared buffer shape"));
         }
         let prepared = self.prepared.clone().ok_or(PreparationError("no prepared mix snapshot"))?;
-        self.render_core(&prepared.source, pos, frames, out);
-        self.render_error.map_or(Ok(()), Err)
+        if bus.is_some_and(|id| prepared.source.bus(id).is_none()) {
+            return Err(PreparationError("unknown render bus"));
+        }
+        let span = i64::try_from(frames).map_err(|_| PreparationError("render span exceeds timeline range"))?;
+        pos.checked_add(span).ok_or(PreparationError("render position overflow"))?;
+        let mut done = 0usize;
+        while done < frames {
+            let at = pos.checked_add(done as i64).ok_or(PreparationError("render position overflow"))?;
+            let mut count = frames - done;
+            if let Some(cutoff) = self.source_cutoff {
+                if at < cutoff {
+                    count = count.min(usize::try_from(cutoff.saturating_sub(at)).unwrap_or(usize::MAX));
+                    if self.source_cutoff_started {
+                        self.source_cutoff_started = false;
+                        for strip in self.strips.values_mut() {
+                            strip.skip_source = false;
+                            for fx in strip.clip_fx.values_mut() {
+                                fx.reset_window();
+                            }
+                        }
+                    }
+                } else if !self.source_cutoff_started {
+                    self.source_cutoff_started = true;
+                    for strip in self.strips.values_mut() {
+                        strip.skip_source = true;
+                        if let Some(instrument) = &mut strip.instrument {
+                            instrument.plugin.all_notes_off();
+                        }
+                        strip.held.clear();
+                    }
+                }
+            }
+            self.render_core(&prepared.source, at, count, &mut []);
+            if let Some(error) = self.render_error {
+                for channel in out.iter_mut() {
+                    channel.iter_mut().take(frames).for_each(|sample| *sample = 0.0);
+                }
+                return Err(error);
+            }
+            let source = match bus {
+                Some(id) => self.busses.get(&id).map(|bus| bus.buf.as_slice()).ok_or(PreparationError("render bus is unavailable"))?,
+                None => self.main.as_slice(),
+            };
+            if strict_finite && source.iter().any(|channel| channel.iter().take(count).any(|sample| !sample.is_finite())) {
+                for channel in out.iter_mut() {
+                    channel.iter_mut().take(frames).for_each(|sample| *sample = 0.0);
+                }
+                return Err(PreparationError("selected render output contains nonfinite samples"));
+            }
+            for (channel, output) in out.iter_mut().enumerate() {
+                for offset in 0..count {
+                    if let Some(dst) = output.get_mut(done + offset) {
+                        let sample = source.get(channel).and_then(|channel| channel.get(offset)).copied().unwrap_or(0.0);
+                        *dst = if sample.is_finite() { sample } else { 0.0 };
+                    }
+                }
+            }
+            done += count;
+        }
+        Ok(())
     }
 }
 
@@ -713,6 +963,9 @@ impl OfflineRenderer {
     }
     pub fn render(&mut self, pos: Samples, frames: usize, out: &mut [Vec<f32>]) -> Result<(), PreparationError> {
         self.mix.render_prepared(pos, frames, out)
+    }
+    pub fn render_output(&mut self, pos: Samples, frames: usize, bus: Option<BusId>, out: &mut [Vec<f32>]) -> Result<(), PreparationError> {
+        self.mix.render_prepared_output(pos, frames, bus, out)
     }
     pub fn mix(&self) -> &MixEngine {
         &self.mix

@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (native Unix original-audio preservation; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (MX-38 fidelity/state/delivery acceptance; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -10,6 +10,8 @@ fail the core-workflow gate in [`roadmap.md`](roadmap.md#alpha-gate) and keep So
 Estimates marked "≈" are judgements; issue numbers are `storytold/soundcraft` GitHub issues.
 
 When you close a gap, delete its entry (or shrink it) in the same PR, and bump the timestamp.
+
+- **Mix bounce (MX-38):** [Fidelity/state/delivery acceptance](bounce-delivery.md) covers strict frame/work admission, history/tail source cutoff, detached prepared/editor state and exclusive output publication. The original comparison criterion remains open; physical capture, cross-platform runtime, Unicode filesystem aliases, arbitrary external hosts and broad delivery options need separate evidence.
 
 ## Ranked gaps
 
@@ -227,6 +229,7 @@ Remaining: Aux/Master and hosted processing, latency-producing effects, real-tim
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Added MX-38 full fidelity/state/delivery acceptance and explicit runtime limits; estimates unchanged |
 | 2026-10-12 | minor | Recorded shared prepared seven-family automation policy, focused native references and integration requirement; EX01–EX10, stage and estimates retained |
 | 2026-10-12 | minor | Verified SC-MX02 nonlinear Master post-fader reference acceptance; broader fidelity/runtime gaps and estimates remain |
 | 2026-10-12 | minor | Verified native stored-name/conflict/comment persistence; broader G-16 and label-sync scope remain |
