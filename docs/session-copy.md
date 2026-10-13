@@ -1,6 +1,6 @@
 # Audio-portable session copies
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Float32 identity and Copy lifecycle verification)
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (separate imported-original preservation)
 
 `session.save_copy` packages every declared audio source into a new SoundCraft session without
 changing the open document, its saved path, dirty state, selection, Undo or Redo. Copy and its
@@ -72,10 +72,16 @@ compare decoded audio and playlists. Tests also cover incomplete/malformed sessi
 same-size destination media, missing-media ordinary Save/recovery, Undo/Redo/journal preservation,
 native destination aliases, strict bundles, delivery failure, and the actual dialog/UI dispatcher.
 
-This is the audio-completeness part of manual-analysis row ED-03. Target-rate/depth/type conversion,
-selected-time export and timing remap, exact original-file bytes, BWF metadata, video copying,
-external plugin-file inventory and whole-copy rollback remain separate work. It does not provide
-Pro Tools session interchange.
+This is the audio-completeness part of manual-analysis row ED-03. The native Unix ED-31
+[original-audio extension](original-audio.md) additionally preserves recorded import originals
+byte-for-byte, with their original rate, BWF metadata and encoded identity, separately from
+playback WAVs. The per-frame UI preview checks availability and size, labeling originals
+`available_unverified`. The explicit `session.save_copy_preview` command verifies encoded
+identity and metadata; Copy repeats those checks before output. Missing or changed originals
+refuse strict Copy. Legacy sources without provenance remain explicitly unrecorded.
+Target-rate/depth/type conversion within Copy, selected-time export and timing remap, browser
+original storage, safe non-Unix temporary-snapshot ownership, video copying, external plugin-file
+inventory and whole-copy rollback remain separate work. It does not provide Pro Tools session interchange.
 
 Fork integration retains per-document recovery, byte-validated media reuse and relink identity
 checks. Native and bundled Copy assign each source's identity from the encoded and decoded saved
@@ -90,5 +96,6 @@ are bundled.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | ED-31 adds verified native Unix originals; command preview verifies identity while UI rendering avoids hashing; non-Unix and broader portability remain open |
 | 2026-10-12 | minor | Integrated saved-PCM identities, Float32 headroom and nonfinite handling; verified immutable export and dialog cancellation |
 | 2026-10-12 | minor | Added strict audio-completeness preflight, native/bundled Copy and dedicated preview dialog |

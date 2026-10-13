@@ -1332,14 +1332,15 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
         Some(format_position(clip.start, s.edit.main_counter, s.sample_rate, &s.tempo, s.frame_rate, s.timecode_start))
     } else if s.edit.flag("view.clip.time.original") || s.edit.flag("view.clip.time.user") {
         clip.source().and_then(|src| s.source(src)).map(|src| {
-            format_position(
-                i64::try_from(src.time_reference).unwrap_or(0) + clip.source_offset(),
-                TimeFormat::Timecode,
-                s.sample_rate,
-                &s.tempo,
-                s.frame_rate,
-                0,
-            )
+            match src.original.as_ref().map(|original| original.timeline_time_reference(s.sample_rate.hz())) {
+                Some(Ok(Some(at))) => match at.checked_add(clip.source_offset()) {
+                    Some(at) => format_position(at, TimeFormat::Timecode, s.sample_rate, &s.tempo, s.frame_rate, 0),
+                    None => "Original time outside timeline range".into(),
+                },
+                Some(Ok(None)) => "No BWF timestamp".into(),
+                Some(Err(_)) => "Original time outside timeline range".into(),
+                None => "Original rate not recorded".into(),
+            }
         })
     } else {
         None

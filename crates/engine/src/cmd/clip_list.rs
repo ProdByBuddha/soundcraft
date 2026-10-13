@@ -57,6 +57,7 @@ fn clear(e: &mut Engine, p: &Value) -> Result<Value> {
     s.sources.retain(|f| !sources.contains(&f.id));
     for f in &sources {
         s.pool.remove(*f);
+        s.pool.remove_original(*f);
     }
     s.edit.selected_clips.retain(|c| !gone.contains(c));
     s.edit.selected_sources.retain(|f| !sources.contains(f));

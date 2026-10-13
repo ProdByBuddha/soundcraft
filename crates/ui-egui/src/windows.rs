@@ -367,13 +367,12 @@ fn workspace(app: &mut SoundApp, ctx: &egui::Context) {
                     } else if name.ends_with(".mid") || name.ends_with(".midi") {
                         let _ = app.run("file.import_midi", json!({"path": path}));
                     } else {
-                        let at = app.engine.session().edit.selection.start;
-                        let _ = app.run("file.import_audio", json!({"path": path, "at": at}));
+                        app.dialogs.open_import_audio(&app.engine, Some(path));
                     }
                 }
             }
         });
-        ui.label(egui::RichText::new("Double-click to import audio/MIDI at the insertion point or open a session.").small());
+        ui.label(egui::RichText::new("Double-click audio to choose import policy; import MIDI at the insertion point or open a session.").small());
     });
     app.ui.show_workspace = open;
 }

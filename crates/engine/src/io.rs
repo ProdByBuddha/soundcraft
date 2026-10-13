@@ -50,6 +50,7 @@ pub fn add_source(s: &mut Session, name: &str, mut buf: AudioBuffer, path: Optio
         time_reference: 0,
         unsaved: true,
         audio_identity: Some(crate::media::audio_identity(&buf)),
+        original: None,
     });
     s.pool.insert(id, Arc::new(SourceAudio::new(buf)));
     id
@@ -627,11 +628,15 @@ pub fn save_session(e: &mut Engine, path: &str) -> Result<usize> {
     if cfg!(target_arch = "wasm32") {
         return save_session_bundle(e, path);
     }
+    let original_issues = crate::original_audio::original_issues(e.session());
     let (fresh, written, p) = write_session(e.session(), path, false)?;
     // Keep the in-memory document in sync (paths, unsaved flags) without an undo step.
     *e.session_mut() = fresh;
     e.path = Some(p.to_string_lossy().into_owned());
     e.mark_clean();
+    for issue in original_issues {
+        e.message(format!("original not preserved by this save: {issue}"));
+    }
     Ok(written)
 }
 
@@ -654,6 +659,7 @@ fn write_session(session: &Session, path: &str, overwrite: bool) -> Result<(Sess
     let dir = p.parent().map(Path::to_path_buf).unwrap_or_default();
     let audio_dir = dir.join("Audio Files");
     let mut s = session.clone();
+    crate::original_audio::persist_originals(&mut s, &dir, false)?;
     let from = s.folder.clone();
     let same_dir = from.as_deref().is_some_and(|f| same_path(f, &dir));
     let mut written = 0;
@@ -838,11 +844,30 @@ pub fn open_session(e: &mut Engine, path: &str) -> Result<Vec<String>> {
     let mut s = Session::from_json(&text).map_err(|err| EngineError::Io(err.to_string()))?;
     let dir = Path::new(path).parent().map(Path::to_path_buf).unwrap_or_default();
     let mut missing = Vec::new();
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
     for src in s.sources.clone() {
+        if src.original.as_ref().is_some_and(|o| o.version != 1) {
+            return Err(EngineError::Unsupported("original media provenance version".into()));
+        }
+        let original = match src.original.as_ref().map(|original| crate::original_audio::verify_original(original, Some(&dir), &cancel)).transpose() {
+            Ok(path) => path,
+            Err(err) => {
+                missing.push(format!("original media for {}: {err}", src.name));
+                None
+            }
+        };
+        let lease = original
+            .filter(|_| {
+                src.original.as_ref().is_some_and(|o| o.policy != soundcraft_model::ImportPolicy::Reference || Path::new(&o.path).is_relative())
+            })
+            .map(|path| Arc::new(soundcraft_model::OriginalAssetLease { path }));
+        if let Some(lease) = &lease {
+            s.pool.retain_original(src.id, Arc::clone(lease));
+        }
         let p = if Path::new(&src.path).is_absolute() { PathBuf::from(&src.path) } else { dir.join(&src.path) };
         match std::fs::read(&p) {
             Ok(bytes) => {
-                if let Err(err) = load_source_audio(&mut s, src.id, &bytes, p.extension().and_then(|x| x.to_str())) {
+                if let Err(err) = load_source_audio_with_original(&mut s, src.id, &bytes, p.extension().and_then(|x| x.to_str()), lease) {
                     missing.push(format!("{}: {err}", p.display()));
                 }
             }
@@ -860,13 +885,23 @@ pub fn open_session(e: &mut Engine, path: &str) -> Result<Vec<String>> {
 }
 
 /// Decode one source's audio file into the session pool, at the session rate.
-fn load_source_audio(s: &mut Session, id: SourceId, bytes: &[u8], ext: Option<&str>) -> std::result::Result<(), String> {
+fn load_source_audio_with_original(
+    s: &mut Session,
+    id: SourceId,
+    bytes: &[u8],
+    ext: Option<&str>,
+    original: Option<Arc<soundcraft_model::OriginalAssetLease>>,
+) -> std::result::Result<(), String> {
     let (_, buf) = soundcraft_audio_io::decode(bytes, ext).map_err(|err| err.to_string())?;
     let buf = crate::media::at_rate(buf, s.sample_rate.hz())?;
     if let Some(src) = s.source(id) {
         crate::media::validate_audio(src, &buf, true)?;
     }
-    s.pool.insert(id, Arc::new(SourceAudio::new(buf)));
+    let audio = match original {
+        Some(lease) => SourceAudio::with_original_asset(buf, lease),
+        None => SourceAudio::new(buf),
+    };
+    s.pool.insert(id, Arc::new(audio));
     Ok(())
 }
 
@@ -910,9 +945,14 @@ pub fn session_bundle(session: &Session) -> Result<(Vec<u8>, Session)> {
     use std::io::Write as _;
     let zerr = |err: zip::result::ZipError| EngineError::Io(format!("bundle: {err}"));
     let ioerr = |err: std::io::Error| EngineError::Io(format!("bundle: {err}"));
+    crate::original_audio::check_bundle_limits(session)?;
     let mut s = session.clone();
     let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored).large_file(true);
+    let (mut total_bytes, original_entries) = crate::original_audio::bundle_originals(&mut s, &mut w)?;
+    if s.sources.len().checked_add(original_entries).and_then(|n| n.checked_add(1)).is_none_or(|n| n > MAX_BUNDLE_ENTRIES) {
+        return Err(EngineError::Io("bundle entry limit exceeded".into()));
+    }
     let mut taken = std::collections::HashSet::new();
     for src in &mut s.sources {
         let Some(audio) = s.pool.get(src.id) else { continue };
@@ -926,6 +966,10 @@ pub fn session_bundle(session: &Session) -> Result<(Vec<u8>, Session)> {
         let opts_wav = EncodeOptions { format: FileFormat::Wav, bit_depth: soundcraft_audio_io::BitDepth::Float32, dither: false, bwf: None };
         let bytes = soundcraft_audio_io::encode(&audio.buffer, &opts_wav).map_err(|err| EngineError::Io(err.to_string()))?;
         let (_, saved) = soundcraft_audio_io::decode(&bytes, Some("wav")).map_err(|err| EngineError::Io(err.to_string()))?;
+        total_bytes = total_bytes
+            .checked_add(bytes.len() as u64)
+            .filter(|n| *n <= MAX_BUNDLE_BYTES)
+            .ok_or_else(|| EngineError::Io("bundle byte limit exceeded".into()))?;
         src.audio_identity = Some(crate::media::audio_identity(&saved));
         w.start_file(target.as_str(), opts).map_err(zerr)?;
         w.write_all(&bytes).map_err(ioerr)?;
@@ -935,6 +979,10 @@ pub fn session_bundle(session: &Session) -> Result<(Vec<u8>, Session)> {
         src.format = FileFormat::Wav;
     }
     let text = s.to_json().map_err(|err| EngineError::Io(err.to_string()))?;
+    total_bytes
+        .checked_add(text.len() as u64)
+        .filter(|n| *n <= MAX_BUNDLE_BYTES)
+        .ok_or_else(|| EngineError::Io("bundle byte limit exceeded".into()))?;
     w.start_file(format!("{}.{}", sanitize_name(&s.name), soundcraft_model::SESSION_EXTENSION), opts).map_err(zerr)?;
     w.write_all(text.as_bytes()).map_err(ioerr)?;
     let bytes = w.finish().map_err(zerr)?.into_inner();
@@ -972,11 +1020,47 @@ pub fn open_session_bytes(e: &mut Engine, name: &str, bytes: &[u8]) -> Result<Ve
     };
     let mut s = Session::from_json(&text).map_err(|err| EngineError::Io(format!("{name}: {err}")))?;
     let mut missing = Vec::new();
+    if cfg!(target_arch = "wasm32") && s.sources.iter().any(|src| src.original.is_some()) {
+        return Err(EngineError::Unsupported("browser encoded-original retention is not implemented".into()));
+    }
+    if s.sources.len() > MAX_BUNDLE_ENTRIES {
+        return Err(EngineError::Io("bundle: too many audio sources".into()));
+    }
+    let mut originals = std::collections::BTreeMap::new();
+    let restored = (|| -> Result<()> {
+        for src in &mut s.sources {
+            let Some(original) = &mut src.original else { continue };
+            if original.version != 1 {
+                return Err(EngineError::Unsupported("original media provenance version".into()));
+            }
+            let Some(encoded) = files.get(&original.path) else {
+                missing.push(format!("original media: bundle entry missing: {}", original.path));
+                continue;
+            };
+            match crate::original_audio::restore_bundle_original(e, original, encoded) {
+                Ok(lease) => {
+                    originals.insert(src.id, lease);
+                }
+                Err(crate::original_audio::BundleOriginalFailure::Invalid(err)) => missing.push(format!("original media for {}: {err}", src.name)),
+                Err(crate::original_audio::BundleOriginalFailure::Storage(err)) => return Err(err),
+            }
+        }
+        Ok(())
+    })();
+    if let Err(err) = restored {
+        drop(originals);
+        e.collect_original_assets()?;
+        return Err(err);
+    }
+    e.collect_original_assets()?;
+    for (id, lease) in &originals {
+        s.pool.retain_original(*id, Arc::clone(lease));
+    }
     for src in s.sources.clone() {
         match files.remove(&src.path) {
             Some(audio) => {
                 let ext = Path::new(&src.path).extension().and_then(|x| x.to_str()).map(str::to_string);
-                if let Err(err) = load_source_audio(&mut s, src.id, &audio, ext.as_deref()) {
+                if let Err(err) = load_source_audio_with_original(&mut s, src.id, &audio, ext.as_deref(), originals.get(&src.id).cloned()) {
                     missing.push(format!("{}: {err}", src.path));
                 }
             }

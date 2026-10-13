@@ -2,7 +2,7 @@
 
 **Stage: pre-alpha** · next: alpha, ~5% and ~110–180 h away (the alpha gate's three failing workflows)
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (shared prepared automation playback scope; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (native Unix original-audio preservation; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 SoundCraft is a clean-room, pure-Rust digital audio workstation that aims at full parity with
 Avid Pro Tools, and then beyond it: faster, open, scriptable and agent-controllable. This page is
@@ -169,6 +169,7 @@ Integrated workflow details and remaining validation: [fork integration](docs/fo
 | 2026-10-12 | minor | Added user-selected missing-audio relink; G-16 remains open for broader session management |
 | 2026-10-12 | minor | Added bounded batch track naming; advanced manual controls remain, estimates unchanged |
 | 2026-10-12 | minor | Recorded partial SC-MX37 Track Bounce file delivery, verification and remaining options; stage and estimates unchanged |
+| 2026-10-12 | minor | Added ED-31 native Unix original bytes/provenance, explicit import policy and separate portable originals; non-Unix ownership, browser storage and broader portability remain open |
 | 2026-10-12 | minor | Strict audio-complete Save Copy and media preview; conversion, selected-time, video and full external-asset portability remain open |
 | 2026-10-10 | minor | Readiness-by-audience table with hours: full 950–1,450 h, mainstream 380–600 h, essentials 110–200 h |
 | 2026-10-10 | minor | Added mainstream practitioner ~36 % and essentials user ~57 % to the headline numbers |
