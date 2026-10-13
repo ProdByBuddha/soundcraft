@@ -1,0 +1,16 @@
+# Owned test-only CLAP instrument with a real seven-sample signal delay.
+[package]
+name = "clap-bounce-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+clap-sys = "0.5"
+
+[workspace]

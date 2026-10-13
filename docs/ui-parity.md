@@ -1,6 +1,6 @@
 # UI parity
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined relink, batch naming and Bounce dialogs) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (MX-38 fidelity/state/delivery acceptance; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 How SoundCraft feels in the hands of a Pro Tools user: tools, modes, modifiers, shortcuts,
 windows, meters. Measured from `crates/model/src/session.rs` (tools, modes), the command
@@ -10,6 +10,8 @@ reference screenshots kept locally under `plan/protools/screenshots/` (16, never
 **UI/UX fidelity: ~55 % ready** (estimated). Remaining ≈ 60–100 h.
 
 Legend: ✅ matches · 🟡 partial · ❌ missing.
+
+**MX-38 — Bounce Mix: partial.** [Delivery controls](bounce-delivery.md) expose effect-tail duration and history before selection, retain settings/error text after refusal, and suppress Cancel/Escape even with simultaneous Enter. Native export uses a detached document-bound snapshot; ordinary instrument editor gestures use the existing parameter command. Source tests and renders are reported per tested revision; device/browser/other-platform behavior remains separate.
 
 ## Tools and modes
 
@@ -73,6 +75,7 @@ Save Session Copy In has a dedicated media preview, blocked-source reasons, expl
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Added MX-38 full fidelity/state/delivery acceptance and explicit runtime limits; estimates unchanged |
 | 2026-10-12 | minor | Combined native dialogs retain independent lifecycle/retry behavior and sample-rate controls; broad UI estimates unchanged |
 | 2026-10-12 | minor | Added native manual audio relink dialog and health-report refresh; no general UI parity claim |
 | 2026-10-12 | minor | Added partial SC-MX37 dialog interaction evidence and bounded delivery/format limits; assessment values unchanged |

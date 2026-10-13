@@ -1,6 +1,6 @@
 # Target-app parity: SoundCraft vs Avid Pro Tools
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Master post-fader reference acceptance added to combined workflows; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1 (bundle 26.4.1.179, macOS)
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (MX-38 fidelity/state/delivery acceptance; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1 (bundle 26.4.1.179, macOS)
 
 The authoritative assessment of how close SoundCraft is to Pro Tools. [`ROADMAP.md`](../ROADMAP.md)
 summarizes it, [`gaps.md`](gaps.md) itemizes every shortfall, and the per-dimension docs go deeper:
@@ -8,6 +8,8 @@ summarizes it, [`gaps.md`](gaps.md) itemizes every shortfall, and the per-dimens
 [`hardware-parity.md`](hardware-parity.md), [`plugin-parity.md`](plugin-parity.md),
 [`localization-parity.md`](localization-parity.md). The generated menu checklist is
 [`parity-checklist.md`](parity-checklist.md).
+
+**MX-38 remains partial:** [Bounce Mix state, history and file delivery](bounce-delivery.md) retains the original independent capture/fidelity criterion and the separate physical-device/platform gates. This scoped work does not remeasure the readiness assessment or existing estimates.
 
 ## Headline
 
@@ -251,6 +253,7 @@ SC-MX02 [Master post-fader insert order](master-post-fader.md) has native accept
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Added MX-38 full fidelity/state/delivery acceptance and explicit runtime limits; estimates unchanged |
 | 2026-10-12 | minor | Recorded SC-MX02 Master post-fader independent nonlinear reference acceptance without readiness remeasurement |
 | 2026-10-12 | minor | Recorded bounded SC-MX11 send pan/mute playback and full automation residuals; estimates unchanged |
 | 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |

@@ -285,7 +285,14 @@ fn retired_workspace_processor_drops_only_when_control_collects_it() {
     .join()
     .unwrap();
     assert!(drops.lock().unwrap().is_empty());
-    let mut side = Side { shadow: HashMap::new(), rate: 48_000.0, editors: HashMap::new(), garbage: retired };
+    let mut side = Side {
+        shadow: HashMap::new(),
+        rate: 48_000.0,
+        editors: HashMap::new(),
+        pending_editor_edits: Vec::new(),
+        pending_editor_batch: None,
+        garbage: retired,
+    };
     side.collect_garbage();
     assert_eq!(*drops.lock().unwrap(), vec![caller]);
     exchange.shutdown.store(true, Ordering::Release);
@@ -348,7 +355,14 @@ fn headless(st: AudioState, tx: Sender<Cmd>, garbage: Receiver<Retirement>) -> P
     Player {
         shared,
         tx,
-        side: Mutex::new(Side { shadow: HashMap::new(), rate: 48_000.0, editors: HashMap::new(), garbage }),
+        side: Mutex::new(Side {
+            shadow: HashMap::new(),
+            rate: 48_000.0,
+            editors: HashMap::new(),
+            pending_editor_edits: Vec::new(),
+            pending_editor_batch: None,
+            garbage,
+        }),
         preparer: Mutex::new(SessionPreparer::default()),
         exchange,
         clock: None,
@@ -450,7 +464,8 @@ fn actual_native_silent_clock_constructor_joins_and_disposes_on_control() {
     let editor_drops = Arc::new(Mutex::new(Vec::new()));
     let mut editors: HashMap<(TrackId, usize), Box<dyn PluginEditor>> = HashMap::new();
     editors.insert((TrackId(1), 0), Box::new(EditorProbe { closed: Arc::clone(&closed), drops: Arc::clone(&editor_drops) }));
-    let side = Mutex::new(Side { shadow: HashMap::new(), rate: 48_000.0, editors, garbage });
+    let side =
+        Mutex::new(Side { shadow: HashMap::new(), rate: 48_000.0, editors, pending_editor_edits: Vec::new(), pending_editor_batch: None, garbage });
     let weak_shared = Arc::downgrade(&shared);
     let player = Player::silent_clock_with(Arc::clone(&shared), tx, Arc::clone(&exchange), 48_000, side);
     assert!(player._stream.is_none());

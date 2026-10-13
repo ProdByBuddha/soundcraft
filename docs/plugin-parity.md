@@ -1,6 +1,6 @@
 # Plugin parity: built-in processors and plugin hosting
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first plugin checklist against Pro Tools 2026.4.1) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (MX-38 fidelity/state/delivery acceptance; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Pro Tools users live in plugins: the bundled set covers everyday mixing, and third-party plugins
 cover the rest. This doc tracks both. Our plugins have our own names and are written from
@@ -8,6 +8,8 @@ scratch (clean-room rule): Avid plugin names are not used here, only categories.
 
 **Built-in plugins and AudioSuite: breadth ~40 %, ready ~35 %** (80–120 h).
 **Third-party hosting: breadth ~70 %, ready ~45 %** (40–60 h). Both estimated.
+
+**MX-38 — live export state: partial.** [Detached Bounce Mix](bounce-delivery.md) requires matching prepared document/generation, available opaque state and immutable defaults for absent stored parameters. Actual pending editor gestures apply only to the export copy; normal instrument editor handling uses the existing validated parameter command. Vendor serialization during explicit capture may allocate/block; this is not a steady-state callback guarantee. External hosts, signed-build compatibility, hardware and other-platform runtime remain separate.
 
 ## Built-in processors (measured from `crates/dsp/src/plugins`)
 
@@ -58,4 +60,5 @@ User report #152: a saved instrument level does not reach the bounce.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Added MX-38 full fidelity/state/delivery acceptance and explicit runtime limits; estimates unchanged |
 | 2026-10-10 | major | Created: built-in processor inventory by category and third-party hosting checklist |

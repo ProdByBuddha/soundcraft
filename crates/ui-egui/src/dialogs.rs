@@ -11,26 +11,104 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub enum Dialog {
-    NewTracks { count: u32, format: String, kind: String, timebase: String, name: String },
-    NewSession { name: String, sample_rate: u32, demo: bool },
-    Bounce { path: String, format: String, bit_depth: String, sample_rate: u32, normalize: bool },
+    NewTracks {
+        count: u32,
+        format: String,
+        kind: String,
+        timebase: String,
+        name: String,
+    },
+    NewSession {
+        name: String,
+        sample_rate: u32,
+        demo: bool,
+    },
+    Bounce {
+        path: String,
+        format: String,
+        bit_depth: String,
+        sample_rate: u32,
+        normalize: bool,
+        tail_seconds: f64,
+        include_preroll: bool,
+        error: String,
+    },
     TrackBounce(crate::track_bounce_dialog::TrackBounceDialog),
     ImportAudio(crate::import_audio_dialog::ImportAudioDialog),
-    RenameTrack { id: TrackId, name: String },
+    RenameTrack {
+        id: TrackId,
+        name: String,
+    },
     BatchRenameTracks(Box<crate::batch_rename::BatchRename>),
-    RenameClip { id: ClipId, name: String },
-    ClearClips { clips: Vec<ClipId>, sources: Vec<SourceId>, message: String },
-    RelinkAudio { source: SourceId, name: String, expected: String, path: String, has_identity: bool, allow_unverified: bool, error: String },
-    PathPrompt { cmd: String, title: String, path: String, key: String },
-    SaveCopy { path: String, preview: soundcraft_engine::session_copy::CopyPreview, document: Arc<Session>, revision: u64 },
-    Number { cmd: String, title: String, key: String, value: f64, suffix: String },
-    TempoChange { at: Samples, bpm: f64 }, // from double-clicking the tempo ruler
-    Fades { shape: String },
-    StripSilence { threshold: f64, min_ms: f64, pre_ms: f64, post_ms: f64 },
-    Group { name: String, edit: bool, mix: bool, members: Vec<(u64, String, bool)> },
-    Session { frame_rate: String, bit_depth: String },
-    ScoreSetup { title: String, composer: String, bars_per_system: u32, show_track_names: bool },
-    SaveChanges { then: (String, Value) },
+    RenameClip {
+        id: ClipId,
+        name: String,
+    },
+    ClearClips {
+        clips: Vec<ClipId>,
+        sources: Vec<SourceId>,
+        message: String,
+    },
+    RelinkAudio {
+        source: SourceId,
+        name: String,
+        expected: String,
+        path: String,
+        has_identity: bool,
+        allow_unverified: bool,
+        error: String,
+    },
+    PathPrompt {
+        cmd: String,
+        title: String,
+        path: String,
+        key: String,
+    },
+    SaveCopy {
+        path: String,
+        preview: soundcraft_engine::session_copy::CopyPreview,
+        document: Arc<Session>,
+        revision: u64,
+    },
+    Number {
+        cmd: String,
+        title: String,
+        key: String,
+        value: f64,
+        suffix: String,
+    },
+    TempoChange {
+        at: Samples,
+        bpm: f64,
+    }, // from double-clicking the tempo ruler
+    Fades {
+        shape: String,
+    },
+    StripSilence {
+        threshold: f64,
+        min_ms: f64,
+        pre_ms: f64,
+        post_ms: f64,
+    },
+    Group {
+        name: String,
+        edit: bool,
+        mix: bool,
+        members: Vec<(u64, String, bool)>,
+    },
+    Session {
+        frame_rate: String,
+        bit_depth: String,
+    },
+    ScoreSetup {
+        title: String,
+        composer: String,
+        bars_per_system: u32,
+        show_track_names: bool,
+    },
+    SaveChanges {
+        then: (String, Value),
+    },
 }
 
 #[derive(Default)]
@@ -148,6 +226,9 @@ impl Dialogs {
                 bit_depth: "24".into(),
                 sample_rate: e.session().sample_rate.hz(),
                 normalize: false,
+                tail_seconds: 0.0,
+                include_preroll: true,
+                error: String::new(),
             },
             "file.import_audio" => Dialog::ImportAudio(crate::import_audio_dialog::ImportAudioDialog::new(e, None)),
             "file.import_midi" => Dialog::PathPrompt { cmd: id.into(), title: "Import MIDI".into(), path: home, key: "path".into() },
@@ -452,7 +533,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
                     ));
                 }
             }
-            Dialog::Bounce { path, format, bit_depth, sample_rate, normalize } => {
+            Dialog::Bounce { path, format, bit_depth, sample_rate, normalize, tail_seconds, include_preroll, error } => {
                 ui.horizontal(|ui| {
                     ui.label("File");
                     ui.add(egui::TextEdit::singleline(path).desired_width(360.0));
@@ -481,17 +562,41 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
                     ui.add(egui::DragValue::new(sample_rate).range(8_000..=768_000).suffix(" Hz")).labelled_by(custom.id);
                 });
                 ui.checkbox(normalize, "Normalize to -0.1 dBFS");
-                ui.label(
-                    egui::RichText::new("Bounces the edit selection, or the whole session when nothing is selected.")
-                        .small()
-                        .color(Tokens::current().text_dim),
+                ui.horizontal(|ui| {
+                    let label = ui.label("Effect tail");
+                    ui.add(egui::DragValue::new(tail_seconds).range(0.0..=14_400.0).speed(0.01).suffix(" s")).labelled_by(label.id);
+                });
+                ui.checkbox(include_preroll, "Render history before selection").on_hover_text(
+                    "Process from session zero when the selection starts later, retaining effect history. Turn off to start effects at the selection.",
                 );
+                ui.label(
+                    egui::RichText::new(
+                        "Bounces the edit selection, or the whole session. The tail continues effects with source audio and new notes stopped.",
+                    )
+                    .small()
+                    .color(Tokens::current().text_dim),
+                );
+                ui.label(egui::RichText::new("Choose a new file. Existing files and recorded media paths are protected.").small());
+                if !error.is_empty() {
+                    ui.colored_label(Tokens::current().rec, error.as_str());
+                }
                 if buttons(ui, "Bounce", enter) {
-                    let p = std::path::Path::new(path.as_str()).with_extension(if format == "aiff" { "aif" } else { format.as_str() });
-                    action = Some((
-                        "file.bounce_mix".into(),
-                        json!({"path": p.to_string_lossy(), "format": format, "bit_depth": bit_depth, "sample_rate": sample_rate, "normalize": normalize}),
-                    ));
+                    let tail = *tail_seconds * app.engine.session().sample_rate.as_f64();
+                    if !tail_seconds.is_finite() || *tail_seconds < 0.0 || !tail.is_finite() || tail >= i64::MAX as f64 {
+                        *error = "Effect tail must be a finite, nonnegative duration within the supported range.".into();
+                    } else {
+                        let p = std::path::Path::new(path.as_str()).with_extension(if format == "aiff" { "aif" } else { format.as_str() });
+                        let mut params = json!({
+                            "path": p.to_string_lossy(), "format": format, "bit_depth": bit_depth,
+                            "sample_rate": sample_rate, "normalize": normalize, "tail_samples": tail.round() as Samples,
+                            "expected_revision": app.engine.revision,
+                        });
+                        let selection = app.engine.session().edit.selection;
+                        let start = if selection.is_empty() { 0 } else { selection.start };
+                        params["preroll_start"] = json!(if *include_preroll { start.min(0) } else { start });
+                        error.clear();
+                        action = Some(("file.bounce_mix".into(), params));
+                    }
                 }
             }
             Dialog::RenameTrack { id, name } => {
@@ -750,7 +855,7 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
         }
     });
     if esc || ctx.memory(|m| m.data.get_temp::<bool>(egui::Id::new("dlg_cancel")).unwrap_or(false)) {
-        if matches!(d, Dialog::TrackBounce(_) | Dialog::ImportAudio(_) | Dialog::SaveCopy { .. }) {
+        if matches!(d, Dialog::Bounce { .. } | Dialog::TrackBounce(_) | Dialog::ImportAudio(_) | Dialog::SaveCopy { .. }) {
             action = None;
         }
         keep = false;
@@ -795,6 +900,10 @@ pub fn show(app: &mut SoundApp, ctx: &egui::Context) {
                 }
                 if let Dialog::ImportAudio(dialog) = &mut d {
                     dialog.error = e.clone();
+                    keep = true;
+                }
+                if let Dialog::Bounce { error, .. } = &mut d {
+                    *error = e.clone();
                     keep = true;
                 }
                 app.ui.status = e;
