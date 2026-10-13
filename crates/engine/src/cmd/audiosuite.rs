@@ -107,6 +107,21 @@ fn process(e: &mut Engine, p: &Value) -> Result<Value> {
         nc.name = new_name;
         nc.content = ClipContent::Audio { source: src, offset: 0 };
         nc.length = i64::try_from(frames).unwrap_or(nc.length);
+        nc.stretch = 1.0;
+        if let Some(slice) = &mut nc.slice {
+            slice.audio_origin_samples = 0;
+            slice.audio_phase_samples = 0.0;
+            if nc.length != clip.length {
+                let ratio = nc.length as f64 / clip.length.max(1) as f64;
+                let scale = |value: i64| soundcraft_time::to_samples(value as f64 * ratio);
+                slice.fade_in_elapsed_samples = scale(slice.fade_in_elapsed_samples);
+                slice.fade_out_remaining_samples = scale(slice.fade_out_remaining_samples);
+                nc.fade_in.len = scale(clip.fade_in.len);
+                nc.fade_out.len = scale(clip.fade_out.len);
+                nc.gain_env = clip.gain_env.iter().map(|&(at, value)| (scale(at), value)).collect();
+                nc.sync_point = scale(clip.sync_point).clamp(0, nc.length);
+            }
+        }
         // Invert and Duplicate are phase/copy operations. The clip's gain stays a clip gain,
         // the same way its fades stay editable. Other processes bake a new file at unity gain.
         if !matches!(name.as_str(), "invert" | "duplicate") {

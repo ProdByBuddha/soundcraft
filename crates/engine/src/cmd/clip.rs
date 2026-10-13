@@ -158,18 +158,6 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({"clip": id, "track": t}))
             }
         ),
-        cmd!("clip.capture", "Capture...", ["Clip"], Some("Cmd+R"), "{name?}", has_range, |e, p| {
-            // Captures the selection as a new whole-file-referencing clip in the clip list (we keep it on the track).
-            let name = str_param(p, "name").unwrap_or("Captured").to_string();
-            let ids = clip_ids_param(e, p);
-            let s = e.session_mut();
-            for id in &ids {
-                if let Some(c) = s.find_clip_mut(*id) {
-                    c.name = name.clone()
-                }
-            }
-            Ok(json!({"clips": ids.len()}))
-        }),
     ]
 }
 
@@ -187,13 +175,32 @@ fn elastic(e: &mut Engine, p: &Value) -> Result<Value> {
         let key = |k: &str| format!("elastic.{}.{k}", id.0);
         let orig = warp_original(s, *id);
         let mut base = c.clone();
-        if let Some((src, off, len)) = orig {
+        if let Some((src, off, len, phase)) = orig {
             base.content = soundcraft_model::ClipContent::Audio { source: src, offset: off };
             base.length = len.max(1);
             base.stretch = 1.0;
+            if base.slice.is_some() || phase != 0.0 {
+                let window = base.slice.get_or_insert_with(soundcraft_model::ClipSliceContext::default);
+                window.audio_origin_samples = 0;
+                window.audio_phase_samples = phase;
+            }
         }
         if elastic.is_none() || !base.is_audio() {
             if let Some(cm) = s.find_clip_mut(*id) {
+                if cm.is_audio() && cm.slice.is_some() {
+                    let cursor = cm.source_position(0);
+                    if !cursor.is_finite() || !(0.0..=MAX_POSITION as f64).contains(&cursor) {
+                        return Err(bad("clip.elastic_properties", "invalid sliced audio cursor"));
+                    }
+                    let floor = cursor.floor();
+                    if let soundcraft_model::ClipContent::Audio { offset, .. } = &mut cm.content {
+                        *offset = floor as i64;
+                    }
+                    if let Some(window) = &mut cm.slice {
+                        window.audio_origin_samples = 0;
+                        window.audio_phase_samples = cursor - floor;
+                    }
+                }
                 cm.stretch = ratio;
             }
             continue;
@@ -208,12 +215,20 @@ fn elastic(e: &mut Engine, p: &Value) -> Result<Value> {
             s.edit.values.insert(key("src"), source.0 as f64);
             s.edit.values.insert(key("off"), offset as f64);
             s.edit.values.insert(key("len"), base.length as f64);
+            if let Some(window) = base.slice {
+                s.edit.values.insert(key("phase"), window.audio_phase_samples);
+                s.edit.values.insert(key("anchor"), 0.0);
+            }
         }
         s.edit.values.insert(key("ratio"), ratio);
         let mut nc = base;
         nc.content = soundcraft_model::ClipContent::Audio { source: src, offset: 0 };
         nc.length = out_len;
         nc.stretch = 1.0;
+        if let Some(window) = &mut nc.slice {
+            window.audio_origin_samples = 0;
+            window.audio_phase_samples = 0.0;
+        }
         super::more_util::replace_clip(s, t, *id, nc);
         rendered += 1;
     }
@@ -228,15 +243,34 @@ fn remove_warp(e: &mut Engine, p: &Value) -> Result<Value> {
         let key = |k: &str| format!("elastic.{}.{k}", id.0);
         let orig = warp_original(s, *id);
         if let Some(c) = s.find_clip_mut(*id) {
+            let cursor = c.source_position(0);
+            let previous_length = c.length;
             c.stretch = 1.0;
-            if let Some((src, off, len)) = orig {
+            if let Some((src, off, len, phase)) = orig {
                 c.content = soundcraft_model::ClipContent::Audio { source: src, offset: off };
                 c.length = len.max(1);
-                c.fade_out.len = c.fade_out.len.min(c.length);
+                if c.slice.is_some() || phase != 0.0 {
+                    let window = c.slice.get_or_insert_with(soundcraft_model::ClipSliceContext::default);
+                    window.audio_origin_samples = 0;
+                    window.audio_phase_samples = phase;
+                    window.fade_out_remaining_samples = window.fade_out_remaining_samples.saturating_add(previous_length.saturating_sub(c.length));
+                }
+                c.gain_env = c.sliced_gain_env(0, c.length);
+                c.clamp_fades();
+                c.sync_point = c.sync_point.clamp(0, c.length);
                 n += 1;
+            } else if c.is_audio() && c.slice.is_some() && cursor.is_finite() && (0.0..=MAX_POSITION as f64).contains(&cursor) {
+                let floor = cursor.floor();
+                if let soundcraft_model::ClipContent::Audio { offset, .. } = &mut c.content {
+                    *offset = floor as i64;
+                }
+                if let Some(window) = &mut c.slice {
+                    window.audio_origin_samples = 0;
+                    window.audio_phase_samples = cursor - floor;
+                }
             }
         }
-        for k in ["src", "off", "len", "ratio"] {
+        for k in ["src", "off", "len", "ratio", "phase", "anchor"] {
             s.edit.values.remove(&key(k));
         }
     }
@@ -244,11 +278,46 @@ fn remove_warp(e: &mut Engine, p: &Value) -> Result<Value> {
 }
 
 /// The audio a warped clip was rendered from, while that file is still in the session.
-fn warp_original(s: &soundcraft_model::Session, id: ClipId) -> Option<(soundcraft_model::SourceId, Samples, Samples)> {
+fn warp_original(s: &soundcraft_model::Session, id: ClipId) -> Option<(soundcraft_model::SourceId, Samples, Samples, f64)> {
     let v = |k: &str| s.edit.values.get(&format!("elastic.{}.{k}", id.0)).copied();
-    let src = soundcraft_model::SourceId(v("src")? as u64);
+    let source = v("src")?;
+    if !source.is_finite() || source.fract() != 0.0 || !(1.0..(1u64 << 53) as f64).contains(&source) {
+        return None;
+    }
+    let src = soundcraft_model::SourceId(source as u64);
     s.source(src)?;
-    Some((src, v("off")? as i64, v("len")? as i64))
+    let offset = v("off")?;
+    let length = v("len")?;
+    let phase = v("phase").unwrap_or(0.0);
+    if !offset.is_finite()
+        || !(0.0..=MAX_POSITION as f64).contains(&offset)
+        || !length.is_finite()
+        || !(1.0..=MAX_POSITION as f64).contains(&length)
+        || !phase.is_finite()
+        || !(0.0..1.0).contains(&phase)
+    {
+        return None;
+    }
+    if let Some(anchor) = v("anchor") {
+        let (_, clip) = s.find_clip(id)?;
+        let ratio = v("ratio").unwrap_or(1.0);
+        if !anchor.is_finite() || !(0.0..=MAX_POSITION as f64).contains(&anchor) || !ratio.is_finite() || ratio <= 0.0 {
+            return None;
+        }
+        let cursor = offset + phase + (clip.source_position(0) - anchor) / ratio;
+        let length = (clip.length as f64 / (ratio * clip.stretch)).round();
+        if !cursor.is_finite()
+            || !(0.0..=MAX_POSITION as f64).contains(&cursor)
+            || !length.is_finite()
+            || !(1.0..=MAX_POSITION as f64).contains(&length)
+        {
+            return None;
+        }
+        let floor = cursor.floor();
+        Some((src, floor as i64, length as i64, cursor - floor))
+    } else {
+        Some((src, offset as i64, length as i64, phase))
+    }
 }
 
 fn flag(e: &mut Engine, p: &Value, get: fn(&soundcraft_model::Clip) -> bool, set: fn(&mut soundcraft_model::Clip, bool)) -> Result<Value> {

@@ -1,8 +1,8 @@
 //! The session: the whole document.
 
 use crate::{
-    Bus, BusId, ChannelFormat, Clip, ClipId, Group, GroupId, MarkerId, MarkerKind, MemoryLocation, OutputPath, Source, SourceId, SourcePool,
-    TRACK_COLORS, Track, TrackId, TrackKind, VideoSource,
+    Bus, BusId, ChannelFormat, Clip, ClipDefinition, ClipDefinitionId, ClipId, Group, GroupId, MarkerId, MarkerKind, MemoryLocation, OutputPath,
+    Source, SourceId, SourcePool, TRACK_COLORS, Track, TrackId, TrackKind, VideoSource,
 };
 use soundcraft_time::{FrameRate, GridValue, Range, SampleRate, Samples, TempoMap, TimeFormat};
 
@@ -295,6 +295,9 @@ pub struct Session {
     pub key_signatures: Vec<(Samples, String)>,
     pub tracks: Vec<Track>,
     pub sources: Vec<Source>,
+    /// Detached reusable media, independent of every timeline playlist.
+    #[serde(default)]
+    pub clip_definitions: Vec<ClipDefinition>,
     /// Movies referenced by Video track clips.
     #[serde(default)]
     pub videos: Vec<VideoSource>,
@@ -324,7 +327,8 @@ impl Default for Session {
 }
 
 impl Session {
-    pub const FORMAT_VERSION: u32 = 1;
+    pub const FORMAT_VERSION: u32 = 2;
+    pub const MAX_JSON_BYTES: usize = 128 * 1024 * 1024;
 
     pub fn new(name: impl Into<String>, sample_rate: SampleRate) -> Self {
         let mut s = Session {
@@ -338,6 +342,7 @@ impl Session {
             key_signatures: Vec::new(),
             tracks: Vec::new(),
             sources: Vec::new(),
+            clip_definitions: Vec::new(),
             videos: Vec::new(),
             busses: Vec::new(),
             outputs: vec![OutputPath { name: "Out 1-2".into(), first_channel: 0, format: ChannelFormat::Stereo }],
@@ -381,6 +386,9 @@ impl Session {
     }
     pub fn source(&self, id: SourceId) -> Option<&Source> {
         self.sources.iter().find(|s| s.id == id)
+    }
+    pub fn clip_definition(&self, id: ClipDefinitionId) -> Option<&ClipDefinition> {
+        self.clip_definitions.iter().find(|definition| definition.id == id)
     }
     pub fn video(&self, id: SourceId) -> Option<&VideoSource> {
         self.videos.iter().find(|v| v.id == id)
@@ -503,12 +511,17 @@ impl Session {
 
     /// Parse a session; decoded audio must be attached separately (`pool`).
     pub fn from_json(text: &str) -> Result<Session, SessionError> {
+        if text.len() > Self::MAX_JSON_BYTES {
+            return Err(SessionError::Invalid("session JSON exceeds 128 MiB".into()));
+        }
         let v: serde_json::Value = serde_json::from_str(text).map_err(|e| SessionError::Format(e.to_string()))?;
         let ver = v.get("format_version").and_then(serde_json::Value::as_u64).ok_or_else(|| SessionError::Format("missing format_version".into()))?;
         if ver > u64::from(Self::FORMAT_VERSION) {
             return Err(SessionError::Version(u32::try_from(ver).unwrap_or(u32::MAX)));
         }
         let mut s: Session = serde_json::from_value(v).map_err(|e| SessionError::Format(e.to_string()))?;
+        s.validate_clip_definitions()?;
+        s.format_version = Self::FORMAT_VERSION;
         s.sanitize();
         Ok(s)
     }
@@ -520,11 +533,15 @@ impl Session {
             .iter()
             .map(|t| t.id.0)
             .chain(self.tracks.iter().flat_map(|t| t.playlists.iter().flat_map(|p| p.clips.iter().map(|c| c.id.0))))
+            .chain(self.all_clips().filter_map(|clip| clip.group))
             .chain(self.sources.iter().map(|s| s.id.0))
+            .chain(self.clip_definitions.iter().map(|definition| definition.id.0))
             .chain(self.videos.iter().map(|v| v.id.0))
             .chain(self.busses.iter().map(|b| b.id.0))
             .chain(self.markers.iter().map(|m| m.id.0))
             .chain(self.groups.iter().map(|g| g.id.0))
+            .chain(self.midi_originals.keys().copied())
+            .chain(self.edit.values.keys().chain(self.edit.flags.iter()).filter_map(|key| clip_metadata_owner(key)))
             .max()
             .unwrap_or(0);
         self.next_id = self.next_id.max(max_id.saturating_add(1));
@@ -539,8 +556,10 @@ impl Session {
             for p in &mut t.playlists {
                 p.clips.retain(|c| c.length > 0);
                 for c in &mut p.clips {
-                    c.fade_in.len = c.fade_in.len.clamp(0, c.length);
-                    c.fade_out.len = c.fade_out.len.clamp(0, c.length);
+                    c.clamp_fades();
+                    c.gain_env.retain(|&(at, value)| (0..=(1 << 40)).contains(&at) && value.is_finite());
+                    c.gain_env.sort_by_key(|&(at, _)| at);
+                    c.gain_env.dedup_by_key(|point| point.0);
                     if !c.gain_db.is_finite() {
                         c.gain_db = 0.0;
                     }
@@ -567,10 +586,124 @@ impl Session {
         let clip_ids: std::collections::BTreeSet<u64> =
             self.tracks.iter().flat_map(|t| t.playlists.iter().flat_map(|p| p.clips.iter().map(|c| c.id.0))).collect();
         self.midi_originals.retain(|id, _| clip_ids.contains(id));
+        let mut definition_ids = std::collections::BTreeSet::new();
+        self.clip_definitions.retain(|definition| definition.validate().is_ok() && definition_ids.insert(definition.id));
+        for track in &mut self.tracks {
+            for playlist in &mut track.playlists {
+                for clip in &mut playlist.clips {
+                    if clip.definition.is_some_and(|id| !definition_ids.contains(&id)) {
+                        clip.definition = None;
+                    }
+                }
+            }
+        }
         if !self.edit.zoom.samples_per_px.is_finite() || self.edit.zoom.samples_per_px <= 0.0 {
             self.edit.zoom.samples_per_px = 1024.0;
         }
     }
+
+    fn validate_clip_definitions(&self) -> Result<(), SessionError> {
+        const LIMIT: i64 = 1 << 40;
+        if self.clip_definitions.len() > 100_000 {
+            return Err(SessionError::Invalid("too many reusable clip definitions".into()));
+        }
+        let existing: std::collections::BTreeSet<u64> = self
+            .tracks
+            .iter()
+            .map(|track| track.id.0)
+            .chain(self.all_clips().map(|clip| clip.id.0))
+            .chain(self.sources.iter().map(|source| source.id.0))
+            .chain(self.videos.iter().map(|source| source.id.0))
+            .chain(self.busses.iter().map(|bus| bus.id.0))
+            .chain(self.markers.iter().map(|marker| marker.id.0))
+            .chain(self.groups.iter().map(|group| group.id.0))
+            .collect();
+        let mut definitions = std::collections::BTreeSet::new();
+        let mut points = 0usize;
+        let mut metadata = 0usize;
+        let mut bytes = 0usize;
+        for definition in &self.clip_definitions {
+            definition.validate().map_err(|message| SessionError::Invalid(message.into()))?;
+            if existing.contains(&definition.id.0) || !definitions.insert(definition.id) || definition.id.0 == u64::MAX {
+                return Err(SessionError::Invalid("ambiguous reusable clip identity".into()));
+            }
+            let midi = match &definition.template.content {
+                crate::ClipContent::Midi { sequence } => sequence.notes.len().saturating_add(sequence.ctrls.len()),
+                _ => 0,
+            };
+            let original = definition.midi_original.as_ref().map_or(0, |sequence| sequence.notes.len().saturating_add(sequence.ctrls.len()));
+            points = points
+                .checked_add(definition.template.gain_env.len())
+                .and_then(|count| count.checked_add(midi))
+                .and_then(|count| count.checked_add(original))
+                .ok_or_else(|| SessionError::Invalid("reusable clip metadata overflow".into()))?;
+            if points > 1_000_000 {
+                return Err(SessionError::Invalid("reusable clip event budget exceeded".into()));
+            }
+            metadata = metadata
+                .checked_add(definition.metadata.values.len())
+                .and_then(|count| count.checked_add(definition.metadata.flags.len()))
+                .ok_or_else(|| SessionError::Invalid("reusable metadata count overflow".into()))?;
+            if metadata > 65_536 {
+                return Err(SessionError::Invalid("reusable metadata budget exceeded".into()));
+            }
+            let entries = definition
+                .template
+                .gain_env
+                .len()
+                .checked_add(midi)
+                .and_then(|count| count.checked_add(original))
+                .and_then(|count| count.checked_mul(64))
+                .ok_or_else(|| SessionError::Invalid("reusable metadata size overflow".into()))?;
+            bytes = bytes
+                .checked_add(entries)
+                .and_then(|count| count.checked_add(definition.name.len()))
+                .and_then(|count| count.checked_add(512))
+                .ok_or_else(|| SessionError::Invalid("reusable metadata size overflow".into()))?;
+            for key in definition.metadata.values.keys().chain(definition.metadata.flags.iter()) {
+                bytes = bytes
+                    .checked_add(key.len())
+                    .and_then(|count| count.checked_add(64))
+                    .ok_or_else(|| SessionError::Invalid("reusable metadata size overflow".into()))?;
+            }
+            if bytes > 128 * 1024 * 1024 {
+                return Err(SessionError::Invalid("reusable metadata byte budget exceeded".into()));
+            }
+        }
+        for clip in self.all_clips() {
+            if clip.definition.is_some_and(|id| !definitions.contains(&id)) {
+                return Err(SessionError::Invalid("unknown reusable clip provenance".into()));
+            }
+            if let Some(window) = clip.slice
+                && ([window.audio_origin_samples, window.fade_in_elapsed_samples, window.fade_out_remaining_samples].iter().any(|value| {
+                    !(-LIMIT..=LIMIT).contains(value) || value.checked_add(clip.length).is_none_or(|end| !(-LIMIT..=LIMIT).contains(&end))
+                }) || !window.audio_phase_samples.is_finite()
+                    || !(0.0..1.0).contains(&window.audio_phase_samples)
+                    || !(0..=LIMIT).contains(&clip.fade_in.len)
+                    || !(0..=LIMIT).contains(&clip.fade_out.len)
+                    || clip.length <= 0
+                    || clip.length > LIMIT
+                    || clip.start.checked_add(clip.length).is_none()
+                    || !clip.stretch.is_finite()
+                    || clip.stretch <= 0.0
+                    || !clip.source_position(0).is_finite()
+                    || clip.source_position(0) < 0.0)
+            {
+                return Err(SessionError::Invalid("invalid timeline clip slice context".into()));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn clip_metadata_owner(key: &str) -> Option<u64> {
+    ["clip.bpm.", "clip.len0.", "clip.pitch.", "clip_fx.bypass."]
+        .iter()
+        .find_map(|prefix| key.strip_prefix(prefix))
+        .or_else(|| {
+            ["clip_fx.", "elastic."].iter().find_map(|prefix| key.strip_prefix(prefix).and_then(|rest| rest.split_once('.').map(|(owner, _)| owner)))
+        })
+        .and_then(|owner| owner.parse().ok())
 }
 
 #[cfg(test)]

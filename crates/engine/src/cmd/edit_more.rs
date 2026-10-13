@@ -745,6 +745,15 @@ fn tce(e: &mut Engine, p: &Value) -> Result<Value> {
     nc.gain_env = c.gain_env.iter().map(|&(o, v)| (scale(o), v)).collect();
     nc.fade_in.len = scale(c.fade_in.len).clamp(0, nc.length);
     nc.fade_out.len = scale(c.fade_out.len).clamp(0, nc.length);
+    if let Some(slice) = &mut nc.slice {
+        slice.audio_origin_samples = 0;
+        slice.audio_phase_samples = 0.0;
+        slice.fade_in_elapsed_samples = scale(slice.fade_in_elapsed_samples);
+        slice.fade_out_remaining_samples = scale(slice.fade_out_remaining_samples);
+        // A middle window can retain a fade whose full denominator exceeds its visible length.
+        nc.fade_in.len = scale(c.fade_in.len);
+        nc.fade_out.len = scale(c.fade_out.len);
+    }
     nc.sync_point = scale(c.sync_point).clamp(0, nc.length);
     replace_clip(s, t, c.id, nc);
     s.edit.selected_clips = vec![c.id];

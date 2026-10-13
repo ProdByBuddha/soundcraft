@@ -25,7 +25,7 @@ fn report(e: &mut Engine, _: &Value) -> Result<Value> {
         for (index, playlist) in track.playlists.iter().enumerate() {
             let active = index == track.active_playlist;
             for clip in &playlist.clips {
-                let ClipContent::Audio { source, offset } = clip.content else { continue };
+                let ClipContent::Audio { source, .. } = clip.content else { continue };
                 clips += 1;
                 if active {
                     active_end = active_end.max(clip.end());
@@ -63,10 +63,10 @@ fn report(e: &mut Engine, _: &Value) -> Result<Value> {
                 if !clip.stretch.is_finite() || clip.stretch <= 0.0 || clip.length <= 0 {
                     add("invalid_clip", "Clip length or stretch is invalid. Replace this clip.");
                 }
-                let stretch = if clip.stretch.is_finite() && clip.stretch > 0.0 { clip.stretch } else { 1.0 };
                 // Match the mixer's last requested source sample, including elastic playback.
-                let last = offset as f64 + clip.length.saturating_sub(1).max(0) as f64 / stretch;
-                if offset < 0 || last >= audio.frames() as f64 {
+                let first = clip.source_position(0);
+                let last = clip.source_position(clip.length.saturating_sub(1).max(0));
+                if !first.is_finite() || first < 0.0 || !last.is_finite() || last >= audio.frames() as f64 {
                     add("source_bounds", "Clip extends outside the loaded audio; part will be silent. Trim the clip or replace its source.");
                 }
             }

@@ -212,8 +212,7 @@ fn effects_render(e: &mut Engine, p: &Value) -> Result<Value> {
         s.edit.values.retain(|k, _| !k.starts_with(&pre));
         s.edit.set_flag(&format!("clip_fx.bypass.{}", id.0), false);
         if let Some(c) = s.find_clip_mut(*id) {
-            c.fade_in.len = c.fade_in.len.min(c.length);
-            c.fade_out.len = c.fade_out.len.min(c.length);
+            c.clamp_fades();
         }
     }
     Ok(json!({"rendered": n}))
@@ -246,10 +245,17 @@ fn conform(e: &mut Engine, p: &Value) -> Result<Value> {
         let ratio = (src_bpm / now).clamp(0.05, 20.0);
         let new_len = ((len0 * ratio).round() as Samples).max(1);
         if let Some(cl) = s.find_clip_mut(cid) {
+            let origin = cl.source_position(0);
             cl.stretch = ratio;
             cl.length = new_len;
-            cl.fade_in.len = cl.fade_in.len.min(new_len);
-            cl.fade_out.len = cl.fade_out.len.min(new_len);
+            if let Some(slice) = &mut cl.slice
+                && let ClipContent::Audio { offset, .. } = &mut cl.content
+            {
+                *offset = origin.floor() as Samples;
+                slice.audio_origin_samples = 0;
+                slice.audio_phase_samples = origin - origin.floor();
+            }
+            cl.clamp_fades();
         }
         out.push(json!({"clip": cid, "source_bpm": src_bpm, "bpm": now, "stretch": ratio}));
     }
@@ -271,6 +277,10 @@ fn remove_pitch_shift(e: &mut Engine, p: &Value) -> Result<Value> {
         let mut nc = c.clone();
         nc.content = ClipContent::Audio { source: src, offset: 0 };
         nc.stretch = 1.0;
+        if let Some(slice) = &mut nc.slice {
+            slice.audio_origin_samples = 0;
+            slice.audio_phase_samples = 0.0;
+        }
         replace_clip(s, t, cid, nc);
         n += 1;
     }
