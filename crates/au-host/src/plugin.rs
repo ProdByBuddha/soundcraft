@@ -1,9 +1,9 @@
 //! `AuPlugin`: a loaded Audio Unit behind the safe `soundcraft_dsp::Plugin` trait.
 
 use crate::ffi::Instance;
-use soundcraft_dsp::{Plugin, PluginInfo};
+use soundcraft_dsp::{AutomationPrepareError, MAX_AUTOMATION_NOTES, MAX_AUTOMATION_PARAMS, ParamTarget, Plugin, PluginInfo, ProcessDelivery};
 
-/// Most MIDI events queued between two blocks (extra events are dropped).
+/// Default prepared MIDI-event budget between two blocks.
 const EVENT_CAP: usize = 1024;
 /// Most channels a host strip may ask for.
 const MAX_CHANNELS: usize = 64;
@@ -25,7 +25,10 @@ pub struct AuPlugin {
     /// Audio Unit id of each `info.params` entry (same order).
     ids: Vec<u32>,
     values: Vec<f32>,
-    /// Pending MIDI, kept sorted by time. Never grows past `EVENT_CAP`.
+    parameter_capacity: usize,
+    note_capacity: usize,
+    overflowed: bool,
+    /// Pending MIDI, kept sorted by time. Never grows past its off-thread prepared logical bound.
     events: Vec<MidiEvent>,
     held: [bool; 128],
     /// Takes audio input (effects); instruments replace the buffer contents.
@@ -40,12 +43,15 @@ pub struct AuPlugin {
 impl AuPlugin {
     pub(crate) fn new(inst: Instance, info: &'static PluginInfo, has_input: bool, takes_midi: bool) -> AuPlugin {
         let ids: Vec<u32> = info.params.iter().map(|p| p.id.parse::<u32>().unwrap_or(u32::MAX)).collect();
-        let values = info.params.iter().zip(&ids).map(|(p, &id)| inst.get_param(id).map_or(p.default, |v| p.clamp(v))).collect();
+        let values: Vec<f32> = info.params.iter().zip(&ids).map(|(p, &id)| inst.get_param(id).map_or(p.default, |v| p.clamp(v))).collect();
         AuPlugin {
             inst,
             info,
             ids,
             values,
+            parameter_capacity: info.params.len(),
+            note_capacity: EVENT_CAP,
+            overflowed: false,
             events: Vec::with_capacity(EVENT_CAP),
             held: [false; 128],
             has_input,
@@ -65,14 +71,88 @@ impl AuPlugin {
         }
     }
 
-    /// Inserts keeping the queue time-sorted; drops the event when the queue is full (never
-    /// allocates on the audio thread).
-    fn push_event(&mut self, e: MidiEvent) {
-        if !self.takes_midi || self.events.len() >= self.events.capacity() {
-            return;
+    /// Inserts only into prepared storage; overflow is a failed delivery.
+    fn push_event(&mut self, e: MidiEvent) -> bool {
+        if !self.takes_midi {
+            return false;
+        }
+        if self.events.len() >= self.note_capacity {
+            self.overflowed = true;
+            return false;
         }
         let pos = self.events.iter().rposition(|q| q.time <= e.time).map_or(0, |i| i + 1);
         self.events.insert(pos, e);
+        true
+    }
+
+    fn discard_pending(&mut self) {
+        self.events.clear();
+        self.overflowed = false;
+    }
+}
+
+impl AuPlugin {
+    fn process_audio(&mut self, io: &mut [Vec<f32>], frames: usize) -> ProcessDelivery {
+        let ch = self.channels.min(io.len());
+        let frames = io.iter().take(ch).map(Vec::len).fold(frames, usize::min);
+        if frames == 0 || ch == 0 {
+            return ProcessDelivery::ProcessorFailed;
+        }
+        if !self.inst.is_ready() {
+            return ProcessDelivery::ProcessorFailed;
+        }
+        let max = self.inst.max_frames();
+        let au_ch = self.inst.channels();
+        if max == 0 {
+            return ProcessDelivery::ProcessorFailed;
+        }
+        let last = u32::try_from(frames - 1).unwrap_or(u32::MAX);
+        for e in &mut self.events {
+            e.time = e.time.min(last);
+        }
+        let mut start = 0usize;
+        while start < frames {
+            let n = (frames - start).min(max);
+            if self.has_input {
+                for c in 0..au_ch {
+                    let src = io.get(c.min(ch - 1)).and_then(|s| s.get(start..start + n));
+                    if let (Some(src), Some(dst)) = (src, self.inst.input_mut(c).and_then(|d| d.get_mut(..n))) {
+                        dst.copy_from_slice(src);
+                    }
+                }
+            }
+            let end = start + n;
+            let k = self.events.iter().position(|e| e.time as usize >= end).unwrap_or(self.events.len());
+            for e in self.events.iter().take(k) {
+                let offset = u32::try_from((e.time as usize).saturating_sub(start)).unwrap_or(0);
+                if !self.inst.midi(e.status, e.data1, e.data2, offset) {
+                    return ProcessDelivery::ProcessorFailed;
+                }
+            }
+            self.events.drain(..k);
+            match self.inst.render(n) {
+                Ok(()) => {
+                    for (c, dst) in io.iter_mut().take(ch).enumerate() {
+                        let Some(dst) = dst.get_mut(start..end) else { continue };
+                        if ch == 1 && au_ch >= 2 {
+                            if let (Some(l), Some(r)) = (self.inst.output(0, n), self.inst.output(1, n)) {
+                                for ((d, a), b) in dst.iter_mut().zip(l).zip(r) {
+                                    let v = 0.5 * (a + b);
+                                    *d = if v.is_finite() { v } else { 0.0 };
+                                }
+                            }
+                        } else if let Some(src) = self.inst.output(c.min(au_ch.saturating_sub(1)), n) {
+                            for (d, &s) in dst.iter_mut().zip(src) {
+                                *d = if s.is_finite() { s } else { 0.0 };
+                            }
+                        }
+                    }
+                }
+                Err(_) => return ProcessDelivery::ProcessorFailed,
+            }
+            start = end;
+        }
+        ProcessDelivery::Delivered
     }
 }
 
@@ -95,14 +175,22 @@ impl Plugin for AuPlugin {
                 self.tail = 0;
             }
         }
-        // Re-send every value so a re-initialized unit matches the session.
-        for (&id, &v) in self.ids.iter().zip(&self.values) {
-            self.inst.set_param(id, v);
+        if self.prepare_automation(self.info.params.len(), EVENT_CAP).is_err() {
+            self.overflowed = true;
+            return;
+        }
+        // Reconfiguration deliberately restores static values; reserving capacity alone
+        // must not overwrite edits made through the unit's editor.
+        for (&id, &value) in self.ids.iter().zip(&self.values) {
+            if !self.inst.set_param(id, value) {
+                self.overflowed = true;
+                return;
+            }
         }
     }
 
     fn reset(&mut self) {
-        self.events.clear();
+        self.discard_pending();
         self.held = [false; 128];
         self.inst.reset();
     }
@@ -111,10 +199,12 @@ impl Plugin for AuPlugin {
         let Some(i) = self.info.params.iter().position(|p| p.id == id) else { return false };
         let (Some(pi), Some(&aid)) = (self.info.params.get(i), self.ids.get(i)) else { return false };
         let v = pi.clamp(value);
+        if !self.inst.set_param(aid, v) {
+            return false;
+        }
         if let Some(slot) = self.values.get_mut(i) {
             *slot = v;
         }
-        self.inst.set_param(aid, v);
         true
     }
 
@@ -124,76 +214,55 @@ impl Plugin for AuPlugin {
     }
 
     fn process(&mut self, io: &mut [Vec<f32>], frames: usize) {
-        let ch = self.channels.min(io.len());
-        let frames = io.iter().take(ch).map(Vec::len).fold(frames, usize::min);
-        if frames == 0 || ch == 0 {
-            return;
-        }
-        if !self.inst.is_ready() {
-            // Effects pass through; instruments are silent.
-            if !self.has_input {
-                for c in io.iter_mut().take(ch) {
-                    c.iter_mut().take(frames).for_each(|s| *s = 0.0);
-                }
+        let result = if self.overflowed { ProcessDelivery::CapacityExceeded } else { self.process_audio(io, frames) };
+        if result != ProcessDelivery::Delivered {
+            self.discard_pending();
+            for channel in io.iter_mut().take(self.channels) {
+                channel.iter_mut().take(frames).for_each(|sample| *sample = 0.0);
             }
-            self.events.clear();
-            return;
         }
-        let max = self.inst.max_frames();
-        let au_ch = self.inst.channels();
-        let last = u32::try_from(frames - 1).unwrap_or(u32::MAX);
-        for e in &mut self.events {
-            e.time = e.time.min(last);
+    }
+
+    fn prepare_automation(&mut self, parameter_capacity: usize, note_capacity: usize) -> Result<(), AutomationPrepareError> {
+        if parameter_capacity < self.info.params.len() || parameter_capacity > MAX_AUTOMATION_PARAMS || note_capacity > MAX_AUTOMATION_NOTES {
+            return Err(AutomationPrepareError::CapacityExceeded);
         }
-        let mut start = 0usize;
-        while start < frames {
-            let n = (frames - start).min(max);
-            if self.has_input {
-                for c in 0..au_ch {
-                    let src = io.get(c.min(ch - 1)).and_then(|s| s.get(start..start + n));
-                    if let (Some(src), Some(dst)) = (src, self.inst.input_mut(c).and_then(|d| d.get_mut(..n))) {
-                        dst.copy_from_slice(src);
-                    }
-                }
-            }
-            let end = start + n;
-            let k = self.events.iter().position(|e| e.time as usize >= end).unwrap_or(self.events.len());
-            for e in self.events.iter().take(k) {
-                let offset = u32::try_from((e.time as usize).saturating_sub(start)).unwrap_or(0);
-                self.inst.midi(e.status, e.data1, e.data2, offset);
-            }
-            self.events.drain(..k);
-            match self.inst.render(n) {
-                Ok(()) => {
-                    for (c, dst) in io.iter_mut().take(ch).enumerate() {
-                        let Some(dst) = dst.get_mut(start..end) else { continue };
-                        if ch == 1 && au_ch >= 2 {
-                            if let (Some(l), Some(r)) = (self.inst.output(0, n), self.inst.output(1, n)) {
-                                for ((d, a), b) in dst.iter_mut().zip(l).zip(r) {
-                                    let v = 0.5 * (a + b);
-                                    *d = if v.is_finite() { v } else { 0.0 };
-                                }
-                            }
-                        } else if let Some(src) = self.inst.output(c.min(au_ch.saturating_sub(1)), n) {
-                            for (d, &s) in dst.iter_mut().zip(src) {
-                                *d = if s.is_finite() { s } else { 0.0 };
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::debug!("{}: render failed ({e})", self.info.id);
-                    if !self.has_input {
-                        for c in io.iter_mut().take(ch) {
-                            if let Some(d) = c.get_mut(start..end) {
-                                d.iter_mut().for_each(|s| *s = 0.0);
-                            }
-                        }
-                    }
-                }
-            }
-            start = end;
+        self.discard_pending();
+        self.events.try_reserve_exact(note_capacity).map_err(|_| AutomationPrepareError::AllocationFailed)?;
+        self.parameter_capacity = parameter_capacity;
+        self.note_capacity = note_capacity;
+        Ok(())
+    }
+
+    fn process_with_targets(&mut self, io: &mut [Vec<f32>], frames: usize, targets: &[ParamTarget<'_>]) -> ProcessDelivery {
+        if frames == 0 || io.len() < self.channels || io.iter().take(self.channels).any(|channel| channel.len() < frames) {
+            self.discard_pending();
+            return ProcessDelivery::ProcessorFailed;
         }
+        let failure = if self.overflowed || targets.len() > self.parameter_capacity {
+            Some(ProcessDelivery::CapacityExceeded)
+        } else if targets.iter().any(|t| !t.value.is_finite() || !self.info.params.iter().any(|p| p.id == t.id))
+            || self.events.iter().any(|e| e.time as usize >= frames)
+        {
+            Some(ProcessDelivery::InvalidTarget)
+        } else {
+            None
+        };
+        if let Some(failure) = failure {
+            self.discard_pending();
+            return failure;
+        }
+        for target in targets {
+            if !self.set_param(target.id, target.value) {
+                self.discard_pending();
+                return ProcessDelivery::InvalidTarget;
+            }
+        }
+        let result = self.process_audio(io, frames);
+        if result != ProcessDelivery::Delivered {
+            self.discard_pending();
+        }
+        result
     }
 
     fn latency(&self) -> usize {
@@ -210,7 +279,9 @@ impl Plugin for AuPlugin {
         }
         let time = u32::try_from(offset).unwrap_or(u32::MAX);
         // Velocity 0 would be a note-off.
-        self.push_event(MidiEvent { time, status: 0x90, data1: note, data2: velocity.clamp(1, 127) });
+        if !self.push_event(MidiEvent { time, status: 0x90, data1: note, data2: velocity.clamp(1, 127) }) {
+            return;
+        }
         if let Some(h) = self.held.get_mut(note as usize) {
             *h = true;
         }
@@ -221,7 +292,9 @@ impl Plugin for AuPlugin {
             return;
         }
         let time = u32::try_from(offset).unwrap_or(u32::MAX);
-        self.push_event(MidiEvent { time, status: 0x80, data1: note, data2: 0 });
+        if !self.push_event(MidiEvent { time, status: 0x80, data1: note, data2: 0 }) {
+            return;
+        }
         if let Some(h) = self.held.get_mut(note as usize) {
             *h = false;
         }

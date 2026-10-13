@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Master post-fader reference acceptance added to combined workflows; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (shared prepared automation playback scope; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -94,7 +94,7 @@ launch #142; Linux #45, #107.
   contributor found seven in one sitting (#116–#122).
 - **Estimate:** ≈ 25–40 h at 0.5–1.5 h each, plus review of the open PRs.
 
-**SC-MX11 — send automation playback: partial.** [Sample-exact send consumers](send-automation.md) cover mono-to-stereo Bus pan and stepped mute on ordinary Bus routes up to 16 channels, using independent synthetic PCM and static references across chunks, seek/loop boundaries and command/save history. This narrows the send consumer gap in G-04; the full seven-family AutoParam reference matrix, other send-pan layouts/routes, global enable/suspend migration, writing/safing and platform/runtime acceptance remain open. Existing mixer estimates are unchanged.
+**SC-MX11 — automation playback: partial.** [Shared prepared consumers](automation-playback.md) now evaluate the seven families in supported audible paths, including ordinary strip/Master Volume, both applicable panners, exact mute steps, existing Bus send level/mute, mono/stereo send pan and registered A–J plugin targets. The original all-exposed-AutoParam acceptance and EX01–EX10 remain open for unsupported track/route/width contexts, writing/suspension, active-Save baselines and runtime/vendor/device acceptance. This does not close G-04 or change its estimate; the earlier [send-only checkpoint](send-automation.md) remains recorded.
 
 **ED-56 remains partial.** [Bounded selection repeat](selection-repeat.md) addresses arrangement automation, copied silence, Shuffle and metadata identity. Fractional/variable-tempo material mapping, automation-only views, note-only MIDI and processed fragments remain; this does not close G-04 or change its estimate.
 
@@ -217,7 +217,7 @@ missing. Out of scope unless the owner decides otherwise.
 Integrated workflow details and remaining validation: [fork integration](fork-integration.md). Existing percentages and hours remain prior estimates.
 ## Scoped manual follow-ups
 
-**SC-MX02 — Master Fader insert order: native reference acceptance.** [Master post-fader processing](master-post-fader.md) applies gain before serial inserts and preserves ordinary pre-fader inserts. Eight Mix and three Engine tests pass with independent nonlinear limiter PCM, an audible wrong-order contrast, callback endpoint/seek/loop schedules, bypass/cascade/meters, command history and native/strict Copy reopen. Hosted/hardware inserts, Master route assignment and latency/PDC, other main widths, dither fidelity and complete seven-family SC-MX11 automation remain open. This narrows signal-order fidelity evidence without closing G-07 or changing ranked estimates.
+**SC-MX02 — Master Fader insert order: native reference acceptance.** [Master post-fader processing](master-post-fader.md) applies gain before serial inserts and preserves ordinary pre-fader inserts. At the original SC-MX02 checkpoint, eight Mix and three Engine tests passed with independent nonlinear limiter PCM, an audible wrong-order contrast, callback endpoint/seek/loop schedules, bypass/cascade/meters, command history and native/strict Copy reopen. Hosted/hardware inserts, Master route assignment and latency/PDC, other main widths, dither fidelity and complete seven-family SC-MX11 automation remain open. This narrows signal-order fidelity evidence without closing G-07 or changing ranked estimates.
 
 **SC-MX37 — Track Bounce: partial.** [Separate file delivery](track-bounce-files.md) replaces the Commit alias for selected Audio and built-in Instrument tracks. Focused tests cover explicit destinations, exact widths, volume/pan policy, range/tail boundaries, native collision/cleanup behavior and document/undo/journal immutability. Native delivery was decoded; the dialog was exercised with menu, header, shortcut, stale-preview and same-frame cancellation checks. The native implementation requires Unix and hard-link-capable destinations; web supports one file through the existing download hook, verified at compilation only.
 
@@ -227,6 +227,7 @@ Remaining: Aux/Master and hosted processing, latency-producing effects, real-tim
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Recorded shared prepared seven-family automation policy, focused native references and integration requirement; EX01–EX10, stage and estimates retained |
 | 2026-10-12 | minor | Verified SC-MX02 nonlinear Master post-fader reference acceptance; broader fidelity/runtime gaps and estimates remain |
 | 2026-10-12 | minor | Verified native stored-name/conflict/comment persistence; broader G-16 and label-sync scope remain |
 | 2026-10-12 | minor | Recorded bounded SC-MX11 send pan/mute playback and full automation residuals; estimates unchanged |

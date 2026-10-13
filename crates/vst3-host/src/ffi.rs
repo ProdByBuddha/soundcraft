@@ -738,6 +738,15 @@ impl ParamChanges {
         ParamChanges { queues: (0..cap).map(|_| ComWrapper::new(ParamQueue::default())).collect(), count: AtomicI32::new(0) }
     }
 
+    fn try_new(cap: usize) -> Result<ParamChanges, soundcraft_dsp::AutomationPrepareError> {
+        let mut queues = Vec::new();
+        queues.try_reserve_exact(cap).map_err(|_| soundcraft_dsp::AutomationPrepareError::AllocationFailed)?;
+        for _ in 0..cap {
+            queues.push(ComWrapper::new(ParamQueue::default()));
+        }
+        Ok(ParamChanges { queues, count: AtomicI32::new(0) })
+    }
+
     fn clear(&self) {
         self.count.store(0, Ordering::Relaxed);
     }
@@ -758,12 +767,14 @@ impl ParamChanges {
     }
 
     /// Host side: one point for `id` at `offset` (replacing an earlier one this block).
-    fn set(&self, id: u32, offset: i32, value: f64) {
+    fn set(&self, id: u32, offset: i32, value: f64) -> bool {
         if let Some((_, q)) = self.queue_for(id) {
             q.offset.store(offset, Ordering::Relaxed);
             q.value.store(value.to_bits(), Ordering::Relaxed);
             q.points.store(1, Ordering::Relaxed);
+            return true;
         }
+        false
     }
 
     fn queue_ptr(&self, index: usize) -> *mut sv::IParamValueQueue {
@@ -808,6 +819,12 @@ impl Class for EventList {
 impl EventList {
     fn new(cap: usize) -> EventList {
         EventList { events: Mutex::new(Vec::with_capacity(cap)), cap }
+    }
+
+    fn try_new(cap: usize) -> Result<EventList, soundcraft_dsp::AutomationPrepareError> {
+        let mut events = Vec::new();
+        events.try_reserve_exact(cap).map_err(|_| soundcraft_dsp::AutomationPrepareError::AllocationFailed)?;
+        Ok(EventList { events: Mutex::new(events), cap })
     }
     fn with<R>(&self, f: impl FnOnce(&mut Vec<sv::Event>) -> R) -> Option<R> {
         match self.events.try_lock() {
@@ -1391,6 +1408,18 @@ impl Instance {
         }
     }
 
+    /// Replaces input pools off-thread. Output/editor pools retain their independent bounds.
+    pub fn prepare_event_capacity(&mut self, parameters: usize, notes: usize) -> Result<(), soundcraft_dsp::AutomationPrepareError> {
+        if parameters > soundcraft_dsp::MAX_AUTOMATION_PARAMS || notes > soundcraft_dsp::MAX_AUTOMATION_NOTES {
+            return Err(soundcraft_dsp::AutomationPrepareError::CapacityExceeded);
+        }
+        let params = ComWrapper::new(ParamChanges::try_new(parameters)?);
+        let events = ComWrapper::new(EventList::try_new(notes)?);
+        self.in_params = params;
+        self.in_events = events;
+        Ok(())
+    }
+
     /// Runs one `process` call over `frames` frames: `params` become one point each at offset 0,
     /// `notes` (sorted by time) have their times made relative to `offset`.
     pub fn process(
@@ -1402,14 +1431,39 @@ impl Instance {
         notes: &[NoteEvent],
         offset: u32,
         project_time: i64,
-    ) -> Result<(), Vst3Error> {
+    ) -> Result<(), soundcraft_dsp::ProcessDelivery> {
+        use soundcraft_dsp::ProcessDelivery;
         if !self.active {
-            return Err(Vst3Error::Process("not active".into()));
+            return Err(ProcessDelivery::ProcessorFailed);
         }
         if frames == 0 || frames > self.max_frames || frames > inputs.frames || frames > outputs.frames {
-            return Err(Vst3Error::Process("block larger than the configured size".into()));
+            return Err(ProcessDelivery::ProcessorFailed);
         }
-        let p = self.processor.clone().ok_or_else(|| Vst3Error::Process("no audio processor".into()))?;
+        if params.len() > self.in_params.queues.len() || notes.len() > self.in_events.cap {
+            return Err(ProcessDelivery::CapacityExceeded);
+        }
+        if params.iter().any(|(_, value)| !value.is_finite())
+            || notes.iter().any(|note| {
+                note.time() < offset
+                    || (note.time() - offset) as usize >= frames
+                    || matches!(note, NoteEvent::On { velocity, .. } if !velocity.is_finite())
+            })
+        {
+            return Err(ProcessDelivery::InvalidTarget);
+        }
+        let p = self.processor.clone().ok_or(ProcessDelivery::ProcessorFailed)?;
+        // Validate and fill the entire input-note batch before mutating parameter queues or
+        // calling the processor. Contended input storage is a failed delivery, not an empty list.
+        self.in_events
+            .with(|v| {
+                v.clear();
+                if self.event_in {
+                    for note in notes {
+                        v.push(note.to_raw(offset));
+                    }
+                }
+            })
+            .ok_or(ProcessDelivery::ProcessorFailed)?;
         if !self.processing {
             // Many plugins return kNotImplemented here; that is not an error.
             // SAFETY: valid, active processor.
@@ -1417,19 +1471,12 @@ impl Instance {
             self.processing = true;
         }
         self.in_params.clear();
-        for &(id, v) in params.iter().take(PARAM_QUEUE_CAP) {
-            self.in_params.set(id, 0, v.clamp(0.0, 1.0));
+        for &(id, v) in params {
+            if !self.in_params.set(id, 0, v.clamp(0.0, 1.0)) {
+                return Err(ProcessDelivery::CapacityExceeded);
+            }
         }
         self.out_params.clear();
-        let event_in = self.event_in;
-        self.in_events.with(|v| {
-            v.clear();
-            if event_in {
-                for n in notes.iter().take(EVENT_CAP) {
-                    v.push(n.to_raw(offset));
-                }
-            }
-        });
         self.out_events.with(Vec::clear);
         inputs.refresh();
         outputs.refresh();
@@ -1454,7 +1501,7 @@ impl Instance {
         // parameter/event objects and the context are owned by `self` and untouched until the
         // call returns.
         let r = unsafe { p.process(&mut data) };
-        if ok(r) { Ok(()) } else { Err(Vst3Error::Process(format!("process returned {r}"))) }
+        if ok(r) { Ok(()) } else { Err(ProcessDelivery::ProcessorFailed) }
     }
 }
 
@@ -1916,13 +1963,13 @@ mod tests {
     #[test]
     fn host_objects_behave() {
         let pc = ParamChanges::new(2);
-        pc.set(5, 0, 0.25);
-        pc.set(5, 0, 0.5);
-        pc.set(6, 0, 1.0);
-        pc.set(7, 0, 1.0);
+        assert!(pc.set(5, 0, 0.25));
+        assert!(pc.set(5, 0, 0.5));
+        assert!(pc.set(6, 0, 1.0));
+        assert!(!pc.set(7, 0, 1.0), "full pool reports failure instead of silently accepting");
         // SAFETY: test calls through our own implementation.
         unsafe {
-            assert_eq!(pc.getParameterCount(), 2, "full pool drops extra params");
+            assert_eq!(pc.getParameterCount(), 2, "failed extra parameter does not change count");
             assert!(pc.getParameterData(2).is_null());
             assert!(pc.getParameterData(-1).is_null());
             let q = pc.queues[0].as_com_ref::<sv::IParamValueQueue>().unwrap();

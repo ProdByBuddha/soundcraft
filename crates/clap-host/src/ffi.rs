@@ -248,6 +248,7 @@ impl Bundle {
             state_ext: std::ptr::null(),
             gui: Arc::new(GuiLink::default()),
             raw: Vec::with_capacity(EVENT_CAP),
+            raw_capacity: EVENT_CAP,
             out_params: Vec::with_capacity(EVENT_CAP),
             active: false,
             processing: false,
@@ -970,6 +971,7 @@ pub(crate) struct Instance {
     state_ext: *const clap_plugin_state,
     gui: Arc<GuiLink>,
     raw: Vec<RawEvent>,
+    raw_capacity: usize,
     /// Parameter values the plugin reported through output events in the current `process`.
     out_params: Vec<(u32, f64)>,
     active: bool,
@@ -1176,8 +1178,18 @@ impl Instance {
         }
     }
 
-    /// Runs one `clap_process` call over `frames` frames. Events must be sorted by time; their
-    /// times are made relative to `offset`. Returns the CLAP process status.
+    /// Sets the logical input-event bound and reserves its storage off-thread.
+    pub fn prepare_event_capacity(&mut self, capacity: usize) -> Result<(), soundcraft_dsp::AutomationPrepareError> {
+        if capacity > soundcraft_dsp::MAX_AUTOMATION_PARAMS + soundcraft_dsp::MAX_AUTOMATION_NOTES {
+            return Err(soundcraft_dsp::AutomationPrepareError::CapacityExceeded);
+        }
+        self.raw.clear();
+        self.raw.try_reserve_exact(capacity).map_err(|_| soundcraft_dsp::AutomationPrepareError::AllocationFailed)?;
+        self.raw_capacity = capacity;
+        Ok(())
+    }
+
+    /// Runs one `clap_process` call with a fixed, allocation-free failure receipt.
     pub fn process(
         &mut self,
         frames: usize,
@@ -1186,12 +1198,23 @@ impl Instance {
         outputs: &mut PortBuffers,
         events: &[Event],
         offset: u32,
-    ) -> Result<i32, ClapError> {
+    ) -> Result<i32, soundcraft_dsp::ProcessDelivery> {
+        use soundcraft_dsp::ProcessDelivery;
         if !self.active {
-            return Err(ClapError::Process("not active".into()));
+            return Err(ProcessDelivery::ProcessorFailed);
         }
         if frames == 0 || frames > self.max_frames || frames > inputs.frames || frames > outputs.frames {
-            return Err(ClapError::Process("block larger than the activated size".into()));
+            return Err(ProcessDelivery::ProcessorFailed);
+        }
+        if events.len() > self.raw_capacity {
+            return Err(ProcessDelivery::CapacityExceeded);
+        }
+        if events.iter().any(|event| {
+            event.time() < offset
+                || (event.time() - offset) as usize >= frames
+                || matches!(event, Event::Param { value, .. } | Event::NoteOn { velocity: value, .. } if !value.is_finite())
+        }) {
+            return Err(ProcessDelivery::InvalidTarget);
         }
         if !self.processing {
             let ok = match self.vt().start_processing {
@@ -1200,13 +1223,13 @@ impl Instance {
                 None => true,
             };
             if !ok {
-                return Err(ClapError::Process("start_processing failed".into()));
+                return Err(ProcessDelivery::ProcessorFailed);
             }
             self.processing = true;
         }
-        let process = self.vt().process.ok_or_else(|| ClapError::Process("plugin has no process".into()))?;
+        let process = self.vt().process.ok_or(ProcessDelivery::ProcessorFailed)?;
         self.raw.clear();
-        for e in events.iter().take(self.raw.capacity()) {
+        for e in events {
             self.raw.push(RawEvent::from_event(e, offset));
         }
         inputs.refresh();
@@ -1246,7 +1269,7 @@ impl Instance {
             }
         }
         self.out_params.clear();
-        if status == CLAP_PROCESS_ERROR { Err(ClapError::Process("plugin reported a processing error".into())) } else { Ok(status) }
+        if status == CLAP_PROCESS_ERROR { Err(ProcessDelivery::ProcessorFailed) } else { Ok(status) }
     }
 }
 

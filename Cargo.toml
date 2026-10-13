@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "apps/*", "xtask"]
+exclude = ["crates/clap-host/tests/allocation_counter"]
 default-members = ["crates/*", "apps/*", "xtask"]
 
 [workspace.package]

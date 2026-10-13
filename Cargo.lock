@@ -3540,6 +3540,7 @@ dependencies = [
  "log",
  "serde",
  "soundcraft-dsp",
+ "test-allocation-counter",
  "thiserror 2.0.21",
 ]
 
@@ -3612,6 +3613,7 @@ dependencies = [
  "soundcraft-model",
  "soundcraft-time",
  "soundcraft-vst3-host",
+ "test-allocation-counter",
 ]
 
 [[package]]
@@ -3632,12 +3634,14 @@ name = "soundcraft-playback"
 version = "0.6.1"
 dependencies = [
  "cpal",
+ "crossbeam-channel",
  "log",
  "soundcraft-audio-io",
  "soundcraft-dsp",
  "soundcraft-mix",
  "soundcraft-model",
  "soundcraft-time",
+ "test-allocation-counter",
 ]
 
 [[package]]
@@ -3698,6 +3702,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "serde",
  "soundcraft-dsp",
+ "test-allocation-counter",
  "thiserror 2.0.21",
  "vst3",
 ]
@@ -3997,6 +4002,10 @@ checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
 ]
+
+[[package]]
+name = "test-allocation-counter"
+version = "0.0.0"
 
 [[package]]
 name = "thiserror"

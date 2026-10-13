@@ -14,12 +14,16 @@ soundcraft-model.workspace = true
 soundcraft-mix.workspace = true
 soundcraft-dsp.workspace = true
 log.workspace = true
+crossbeam-channel = "0.5.17"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cpal.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 cpal = { workspace = true, features = ["wasm-bindgen"] }
+
+[dev-dependencies]
+test-allocation-counter = { path = "../clap-host/tests/allocation_counter" }
 
 [lints]
 workspace = true

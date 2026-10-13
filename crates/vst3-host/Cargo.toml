@@ -23,6 +23,10 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSGeometry", "NSString"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSGraphics"] }
 
+# Safe test API; allocator forwarding lives only in the isolated test helper.
+[dev-dependencies]
+test-allocation-counter = { path = "../clap-host/tests/allocation_counter" }
+
 [[test]]
 name = "editor_main_thread"
 harness = false
