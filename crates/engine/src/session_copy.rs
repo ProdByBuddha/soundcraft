@@ -89,6 +89,32 @@ pub fn preview(e: &Engine, path: Option<&str>) -> CopyPreview {
     report
 }
 
+/// An explicit command may verify encoded identity; per-frame UI previews only inspect availability.
+/// This reads originals but never changes the document or writes a destination.
+pub fn verified_preview(e: &Engine, path: Option<&str>) -> CopyPreview {
+    let mut report = preview(e, path);
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let originals = e.session().sources.iter().filter_map(|src| src.original.as_ref());
+    for (original, row) in originals.zip(report.media.iter_mut().filter(|row| row.kind == "original")) {
+        if row.status == "unavailable" {
+            continue;
+        }
+        match crate::original_audio::verify_original(original, e.session().folder.as_deref(), &cancel) {
+            Ok(_) => {
+                row.status = "verified";
+                row.reason = None;
+            }
+            Err(err) => {
+                row.status = "invalid";
+                row.reason = Some(err.to_string());
+                report.issues.push(format!("{}: {err}", row.name));
+                report.ready = false;
+            }
+        }
+    }
+    report
+}
+
 fn inspect(s: &Session) -> CopyPreview {
     let mut report = CopyPreview {
         ready: true,
@@ -180,6 +206,23 @@ fn inspect(s: &Session) -> CopyPreview {
             _ => report.invalid_audio += 1,
         }
         report.media.push(row);
+    }
+    for src in &s.sources {
+        let Some(original) = &src.original else { continue };
+        let issue = crate::original_audio::original_availability(original, s.folder.as_deref()).err().map(|err| err.to_string());
+        if let Some(issue) = &issue {
+            report.issues.push(format!("{}: {issue}", src.name));
+        }
+        report.estimated_bytes = report.estimated_bytes.saturating_add(original.bytes);
+        report.media.push(MediaRow {
+            kind: "original",
+            source: src.id.0,
+            name: clipped(&src.name),
+            source_path: clipped(&original.path),
+            status: if issue.is_some() { "unavailable" } else { "available_unverified" },
+            output_path: None,
+            reason: issue.or_else(|| Some("encoded identity is verified when copying".into())),
+        });
     }
     let references = s.tracks.iter().flat_map(|t| {
         t.playlists
@@ -387,6 +430,16 @@ fn result(path: &str, output: String, written: usize, report: CopyPreview) -> Co
     }
 }
 
+fn originals_copied(s: &Session, report: &mut CopyPreview, status: &'static str) {
+    for row in report.media.iter_mut().filter(|row| row.kind == "original") {
+        if let Some(original) = s.sources.iter().find(|src| src.id.0 == row.source).and_then(|src| src.original.as_ref()) {
+            row.status = status;
+            row.output_path = Some(original.path.clone());
+            row.reason = None;
+        }
+    }
+}
+
 /// Strict, nonmutating copy; this is deliberately separate from permissive recovery writes.
 pub fn save(e: &Engine, path: &str) -> Result<CopyResult> {
     let mut report = preview(e, Some(path));
@@ -398,6 +451,8 @@ pub fn save(e: &Engine, path: &str) -> Result<CopyResult> {
     let dir = file.parent().unwrap_or(Path::new(""));
     let audio_dir = dir.join("Audio Files");
     let mut s = e.session().clone();
+    crate::original_audio::persist_originals(&mut s, dir, true)?;
+    originals_copied(&s, &mut report, "copied_verified");
     let mut written = 0;
     for (src, row) in s.sources.iter_mut().zip(report.media.iter_mut()) {
         let audio = s.pool.get(src.id).ok_or_else(|| EngineError::Io("validated audio became unavailable".into()))?;
@@ -476,6 +531,7 @@ pub fn bundle(e: &Engine, path: &str) -> Result<(Vec<u8>, CopyResult)> {
         report.ready = false;
     }
     require_ready(&report)?;
+    crate::original_audio::check_bundle_limits(e.session())?;
     if report.estimated_bytes > MAX_BUNDLE_BYTES {
         return Err(EngineError::BadParams("session.save_copy".into(), "audio and session exceed the browser bundle's 1 GiB limit".into()));
     }
@@ -483,6 +539,8 @@ pub fn bundle(e: &Engine, path: &str) -> Result<(Vec<u8>, CopyResult)> {
     s.name = copy_stem(Path::new(path).file_stem().and_then(|name| name.to_str()).unwrap_or("Untitled"));
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored).large_file(true);
+    crate::original_audio::bundle_originals(&mut s, &mut writer)?;
+    originals_copied(&s, &mut report, "packaged_verified");
     for (src, row) in s.sources.iter_mut().zip(report.media.iter_mut()) {
         let audio = s.pool.get(src.id).ok_or_else(|| EngineError::Io("validated audio became unavailable".into()))?;
         let bytes = soundcraft_audio_io::encode(&audio.buffer, &options()).map_err(|err| EngineError::Io(err.to_string()))?;

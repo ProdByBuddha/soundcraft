@@ -249,6 +249,104 @@ pub fn resample_to_frames(ch: &[Vec<f32>], from: u32, to: u32, frames: usize) ->
     Ok(resample_ratio(ch, f64::from(to) / f64::from(from), frames))
 }
 
+/// Exact-length offline conversion with cooperative cancellation and fallible allocation.
+/// Cancellation is checked during kernel construction and every 256 output samples. This is
+/// a control-side operation; the closure must return true when cancellation is requested.
+pub fn resample_to_frames_cancellable(
+    ch: &[Vec<f32>],
+    from: u32,
+    to: u32,
+    frames: usize,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<Vec<Vec<f32>>, &'static str> {
+    if cancelled() {
+        return Err("sample-rate conversion cancelled");
+    }
+    if !(8_000..=768_000).contains(&from) || !(8_000..=768_000).contains(&to) {
+        return Err("sample rates must be within 8000..768000 Hz");
+    }
+    let length = ch.first().map_or(0, Vec::len);
+    if ch.is_empty() || ch.len() > crate::util::MAX_CHANNELS || length == 0 || ch.iter().any(|c| c.len() != length) {
+        return Err("conversion requires nonempty, equal-length channels within the channel limit");
+    }
+    if frames == 0 || frames.checked_mul(ch.len()).is_none_or(|n| n > MAX_OFFLINE_SAMPLES) {
+        return Err("conversion output exceeds the offline sample allocation limit or is empty");
+    }
+    if from == to && frames != length {
+        return Err("equal-rate conversion must retain its frame count");
+    }
+    let ratio = f64::from(to) / f64::from(from);
+    let table = if from == to {
+        None
+    } else {
+        let cutoff = (if ratio < 1.0 { ratio * 0.94 } else { 0.97 }).clamp(0.01, 1.0);
+        let half_width = SINC_ZC / cutoff;
+        let n = (half_width * SINC_RES as f64).ceil() as usize + 2;
+        let beta = 9.0;
+        let i0b = bessel_i0(beta);
+        let mut values = Vec::new();
+        values.try_reserve_exact(n).map_err(|_| "conversion kernel allocation failed")?;
+        for i in 0..n {
+            if i.is_multiple_of(256) && cancelled() {
+                return Err("sample-rate conversion cancelled");
+            }
+            let t = i as f64 / SINC_RES as f64;
+            let x = t / half_width;
+            let value = if x >= 1.0 {
+                0.0
+            } else {
+                let arg = PI * cutoff * t;
+                let sinc = if arg.abs() < 1e-12 { 1.0 } else { arg.sin() / arg };
+                let window = bessel_i0(beta * (1.0 - x * x).max(0.0).sqrt()) / i0b;
+                (cutoff * sinc * window) as f32
+            };
+            values.push(value);
+        }
+        Some(SincTable { table: values, half_width })
+    };
+    let len = i64::try_from(length).map_err(|_| "conversion input exceeds addressable range")?;
+    let mut output = Vec::new();
+    output.try_reserve_exact(ch.len()).map_err(|_| "conversion channel allocation failed")?;
+    for input in ch {
+        if cancelled() {
+            return Err("sample-rate conversion cancelled");
+        }
+        let mut channel = Vec::new();
+        channel.try_reserve_exact(frames).map_err(|_| "conversion output allocation failed")?;
+        if let Some(table) = &table {
+            for n in 0..frames {
+                if n.is_multiple_of(256) && cancelled() {
+                    return Err("sample-rate conversion cancelled");
+                }
+                let t = n as f64 / ratio;
+                let lo = (t - table.half_width).ceil().max(0.0) as i64;
+                let hi = ((t + table.half_width).floor() as i64).min(len - 1);
+                let mut acc = 0.0f32;
+                let mut j = lo;
+                while j <= hi {
+                    if let Some(&value) = input.get(j as usize) {
+                        acc += value * table.at(t - j as f64);
+                    }
+                    j += 1;
+                }
+                channel.push(acc);
+            }
+        } else {
+            for chunk in input.chunks(256) {
+                if cancelled() {
+                    return Err("sample-rate conversion cancelled");
+                }
+                channel.extend_from_slice(chunk);
+            }
+        }
+        output.push(channel);
+    }
+    if cancelled() {
+        return Err("sample-rate conversion cancelled");
+    }
+    Ok(output)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Time stretch (WSOLA) and pitch shift
 

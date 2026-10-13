@@ -53,7 +53,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Audio...",
             ["File", "Import"],
             Some("Cmd+Shift+I"),
-            "{path | paths: [..], track?: target track, at?: position, new_tracks?: true (default; false uses `track` or the selected audio track)}",
+            "{path | paths: [strings], policy?: copy|reference|convert (default copy), rate_conversion?: false (required for Copy/Reference rate mismatch), track?: audio track, at?: position, new_tracks?: true, use_timestamp?: false} — preserves encoded originals separately from session-rate playback audio",
             always,
             import_audio
         ),
@@ -213,24 +213,48 @@ fn new_session(e: &mut Engine, p: &Value) -> Result<Value> {
 }
 
 fn import_audio(e: &mut Engine, p: &Value) -> Result<Value> {
-    let mut paths: Vec<String> =
-        p.get("paths").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
-    if let Some(one) = str_param(p, "path") {
-        paths.push(one.to_string());
+    let mut paths = Vec::new();
+    if let Some(value) = p.get("paths") {
+        let values = value.as_array().ok_or_else(|| bad("file.import_audio", "`paths` must be an array of strings"))?;
+        for value in values {
+            paths.push(std::path::PathBuf::from(value.as_str().ok_or_else(|| bad("file.import_audio", "every path must be a string"))?));
+        }
+    }
+    if let Some(value) = p.get("path") {
+        paths.push(std::path::PathBuf::from(value.as_str().ok_or_else(|| bad("file.import_audio", "`path` must be a string"))?));
     }
     if paths.is_empty() {
         return Err(bad("file.import_audio", "`path` or `paths` required"));
     }
-    let at = position_param(e, "file.import_audio", p, "at")?.unwrap_or(0).max(0);
-    let target = import_audio_target(e, p)?;
-    let mut out = Vec::new();
-    for path in &paths {
-        let bytes = std::fs::read(path).map_err(|err| EngineError::Io(format!("{path}: {err}")))?;
-        let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("Audio").to_string();
-        let r = crate::io::import_audio_bytes(e, &name, &bytes, Some(path.as_str()), target, at)?;
-        out.push(r);
+    for key in ["new_tracks", "rate_conversion", "use_timestamp"] {
+        if p.get(key).is_some_and(|value| !value.is_boolean()) {
+            return Err(bad("file.import_audio", format!("`{key}` must be a boolean")));
+        }
     }
-    Ok(json!({"imported": out}))
+    let policy = match p.get("policy") {
+        None => soundcraft_model::ImportPolicy::Copy,
+        Some(value) => match value.as_str() {
+            Some("copy") => soundcraft_model::ImportPolicy::Copy,
+            Some("reference") => soundcraft_model::ImportPolicy::Reference,
+            Some("convert") => soundcraft_model::ImportPolicy::Convert,
+            _ => return Err(bad("file.import_audio", "`policy` must be copy, reference or convert")),
+        },
+    };
+    let at = super::position_param_raw(e, "file.import_audio", p, "at")?.unwrap_or(0);
+    if !(-MAX_POSITION..=MAX_POSITION).contains(&at) {
+        return Err(bad("file.import_audio", "`at` exceeds the supported timeline range"));
+    }
+    let target = import_audio_target(e, p)?;
+    let options = crate::original_audio::ImportOptions {
+        policy,
+        target,
+        at,
+        rate_conversion: bool_or(p, "rate_conversion", false),
+        use_timestamp: bool_or(p, "use_timestamp", false),
+        ..crate::original_audio::ImportOptions::default()
+    };
+    let plan = crate::original_audio::prepare_audio_import(e, &paths, options)?;
+    crate::original_audio::apply_audio_import(e, plan)
 }
 
 /// Destination for `file.import_audio`: an explicit `track` wins; otherwise `new_tracks`

@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (shared prepared automation playback scope; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (native Unix original-audio preservation; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -77,7 +77,7 @@ When you close a gap, delete its entry (or shrink it) in the same PR, and bump t
 
 ### G-04. Correctness bugs in "done" features
 
-- **Session copy:** [strict audio preflight and manifest](session-copy.md) cover all declared decoded sources while preserving missing-media ordinary saves/recovery. Conversion, selected-time export, original-file bytes/BWF metadata, video, external plugin-file inventory and whole-copy rollback remain open (manual-analysis ED-03 stays partial).
+- **Session copy:** [strict audio preflight and manifest](session-copy.md) cover all declared decoded sources while preserving missing-media ordinary saves/recovery. [ED-31 original preservation](original-audio.md) adds native Unix Copy/Reference/Convert import choices, recorded original rate/BWF/hash and byte-exact originals separate from playback derivatives in portable audio copies. Conversion options within Save Copy itself, selected-time export, browser original storage, safe non-Unix snapshot ownership, video, external plugin-file inventory and whole-copy rollback remain open (manual-analysis ED-03 stays partial).
 
 Open on 2026-10-10 (several have PRs open):
 editing #3, #5, #140, #144; clip/session #86 (PR #123), #88 (PR #130), #91 (PR #124), #92 (PR #132);
@@ -234,6 +234,7 @@ Remaining: Aux/Master and hosted processing, latency-producing effects, real-tim
 | 2026-10-12 | minor | Added bounded ED-56 arrangement repeat planning, automation/Shuffle correctness and explicit musical/fragment residuals; estimates unchanged |
 | 2026-10-12 | minor | Narrowed G-04 with safe unprocessed audio Heal; advanced Heal and shortcut residuals remain |
 | 2026-10-12 | minor | Narrowed native recording allocation and session management gaps; physical-volume, source-streaming and advanced workflow checks remain |
+| 2026-10-12 | minor | ED-31 native Unix original preservation narrows original import/copy gaps; non-Unix ownership, browser storage, broader assets and whole-copy transactions remain open |
 | 2026-10-12 | minor | Narrowed G-16: manual audio relink added; automatic/batch searches and broader session management remain |
 | 2026-10-12 | minor | Narrowed G-16: bounded batch track naming added; advanced controls and clip/file workflows remain |
 | 2026-10-12 | minor | Recorded partial SC-MX37 Track Bounce support and explicit residuals; ranked gap estimates unchanged |
