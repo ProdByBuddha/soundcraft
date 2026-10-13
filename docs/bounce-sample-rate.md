@@ -1,6 +1,6 @@
 # Bounce delivery sample rate
 
-Last reviewed: 2026-10-12. Last updated: 2026-10-12.
+Last reviewed: 2026-10-13. Last updated: 2026-10-13.
 
 `file.bounce_mix` accepts optional `sample_rate`, an integer JSON number from 8,000 through
 768,000 Hz. Omitting it retains the session rate. The Bounce Mix dialog starts at the session
@@ -32,7 +32,10 @@ again to prevent silently truncated delivery. A declared Main output or named bu
 16 channels is rejected, even when a stereo fold is requested, before the model can silently
 substitute stereo for an unsupported Main format. Supported Main formats, including the
 existing mono/missing-output stereo fallback, retain their behavior. These limits cover whole planar bounce buffers;
-shared-renderer plugin latency/tail workspaces and render-bound work in PR #326 remain separate.
+shared-renderer plugin latency/tail workspaces have their own preparation bounds. The
+[MX-38 bounce delivery arc](bounce-delivery.md) adds explicit history/tails, detached live
+state and exclusive publication; the full acceptance criterion remains open. PR #326 is a
+separate upstream proposal and is not treated as merged runtime evidence.
 
 Tests cover default byte/stat equivalence, 44.1/48/96 kHz delivery in WAV/AIFF/FLAC, distinct
 multichannel signals, bus and stereo-fold routing, exact frames and speaker masks, output-rate
@@ -47,5 +50,7 @@ other MX42 mixdown gaps. No Pro Tools resources or implementation code were used
 
 ## Revision history
 
+- 2026-10-13: Linked full MX-38 state/history/publication acceptance without broadening the
+  sample-rate quality or runtime claims.
 - 2026-10-12: Added independently selected bounce delivery rate, bounded conversion and scoped
   command/UI regression coverage. No global parity/readiness estimate was changed.

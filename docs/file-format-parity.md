@@ -1,6 +1,6 @@
 # File-format parity
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (Float32 preservation and independent bounce delivery rate) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (MX-38 fidelity/state/delivery acceptance; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every format Pro Tools reads or writes, and ours. The Pro Tools list comes from the document types
 its bundle declares (`CFBundleDocumentTypes` in Info.plist: names only, nothing else read) and its
@@ -12,6 +12,8 @@ documented import/bounce options. Ours comes from `crates/audio-io` (`detect_for
 session interchange carries a third of the weight and is at 0 %). Remaining ≈ 70–120 h.
 
 Legend: ✅ supported and tested · 🟡 partial · ❌ missing · — not applicable.
+
+**MX-38 — Mix bounce: partial.** [Exact capture/tail and fresh-file delivery](bounce-delivery.md) shares pure frame/channel/rate admission with the UI and validates encoded headers before publication. Direct APIs retain explicit BWF metadata; ordinary mix export does not invent source timestamps. Physical/device fidelity, platform runtime and broader format options remain separate.
 
 ## Sessions and interchange
 
@@ -90,6 +92,7 @@ Integrated workflow details and remaining validation: [fork integration](fork-in
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Added MX-38 full fidelity/state/delivery acceptance and explicit runtime limits; estimates unchanged |
 | 2026-10-12 | minor | Finite Float32 headroom and bounded independent Bounce Mix sample rate integrated with saved PCM identity |
 | 2026-10-12 | minor | Backward-compatible optional PCM identity; known changed media stays unavailable; manual audio relink persists across save/bundle reopening |
 | 2026-10-12 | minor | Recorded partial SC-MX37 selected-track format/delivery evidence and Float32/platform residuals; assessment values unchanged |

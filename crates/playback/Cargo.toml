@@ -24,6 +24,14 @@ cpal = { workspace = true, features = ["wasm-bindgen"] }
 
 [dev-dependencies]
 test-allocation-counter = { path = "../clap-host/tests/allocation_counter" }
+soundcraft-engine.workspace = true
+soundcraft-clap-host.workspace = true
+soundcraft-vst3-host.workspace = true
+soundcraft-midi.workspace = true
+serde_json.workspace = true
+
+[[example]]
+name = "bounce_editor_state_driver"
 
 [lints]
 workspace = true

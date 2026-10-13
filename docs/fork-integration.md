@@ -1,6 +1,8 @@
 # Fork integration scope
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (combined Send/Repeat playback, native track names, isolated CI and DCO workflow)
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (MX-38 fidelity/state/delivery acceptance; estimates unchanged)
+
+**MX-38 full acceptance remains open.** [Bounce Mix fidelity and delivery](bounce-delivery.md) combines exact history/tail/rate requests, original-document-preserving prepared/editor state capture and exclusive fresh-file output. Independent callback/file fixtures and actual UI dispatch are required together; source/formatting checks alone do not prove playback fidelity or platform acceptance.
 
 ## Fork integration, 2026-10-12
 
@@ -91,6 +93,7 @@ a stale runner can check the previous checkout even when Cargo is invoked from t
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Added MX-38 full fidelity/state/delivery acceptance and explicit runtime limits; estimates unchanged |
 | 2026-10-12 | minor | Added native stored-name/conflict/comment Save/Open acceptance without changing broader label-sync or runtime limits |
 | 2026-10-12 | minor | Recorded the published full isolated-CI pass, observed controlled module loads and retained external acceptance limits |
 | 2026-10-12 | minor | Added Send/Repeat/strict Copy curve and audible-output regressions; qualified timing and installed-plugin evidence |
