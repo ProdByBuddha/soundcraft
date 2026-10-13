@@ -10,6 +10,7 @@ mod audio_midi;
 mod audiosuite;
 mod clap;
 mod clip;
+mod clip_capture;
 mod clip_list;
 mod clip_more;
 mod edit;
@@ -113,6 +114,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(track_rename::specs());
         v.extend(track_bounce::specs());
         v.extend(clip::specs());
+        v.extend(clip_capture::specs());
         v.extend(event::specs());
         v.extend(mix::specs());
         v.extend(options::specs());

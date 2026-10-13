@@ -1,6 +1,6 @@
 //! Clips: windows onto audio sources or MIDI sequences, placed on a playlist.
 
-use crate::{ClipId, SourceId};
+use crate::{ClipDefinitionId, ClipId, SourceId};
 use soundcraft_midi::Sequence;
 use soundcraft_time::{Range, Samples};
 
@@ -65,6 +65,20 @@ pub enum ClipContent {
     Video { source: SourceId, offset: Samples },
 }
 
+/// A visible window whose source and fade coordinates retain their original anchors.
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct ClipSliceContext {
+    pub audio_origin_samples: Samples,
+    pub fade_in_elapsed_samples: Samples,
+    pub fade_out_remaining_samples: Samples,
+    #[serde(default, skip_serializing_if = "zero")]
+    pub audio_phase_samples: f64,
+}
+
+fn zero(value: &f64) -> bool {
+    *value == 0.0
+}
+
 /// A clip on a playlist.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Clip {
@@ -105,6 +119,11 @@ pub struct Clip {
     /// Reversed playback (AudioSuite Reverse renders into a new source; this is for previews).
     #[serde(default)]
     pub group: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slice: Option<ClipSliceContext>,
+    /// Optional provenance; changing an instance never changes its definition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<ClipDefinitionId>,
 }
 
 fn one() -> f64 {
@@ -131,6 +150,8 @@ impl Clip {
             color: None,
             stretch: 1.0,
             group: None,
+            slice: None,
+            definition: None,
         }
     }
 
@@ -187,25 +208,65 @@ impl Clip {
         }
     }
 
+    /// Fractional media coordinate. Audio preserves a sliced stretch phase; picture is linear.
+    pub fn source_position(&self, rel: Samples) -> f64 {
+        match self.content {
+            ClipContent::Audio { offset, .. } => {
+                let origin = self.slice.map_or(0, |window| window.audio_origin_samples);
+                let stretch = if self.stretch.is_finite() && self.stretch > 0.0 { self.stretch } else { 1.0 };
+                offset as f64 + self.slice.map_or(0.0, |window| window.audio_phase_samples) + origin.saturating_add(rel) as f64 / stretch
+            }
+            ClipContent::Video { offset, .. } => offset.saturating_add(rel) as f64,
+            ClipContent::Midi { .. } => 0.0,
+        }
+    }
+
+    pub fn envelope_db_at(&self, rel: Samples) -> f32 {
+        env_value(&self.gain_env, rel)
+    }
+
+    pub fn gain_db_at(&self, rel: Samples) -> f32 {
+        self.gain_db + self.envelope_db_at(rel)
+    }
+
+    pub fn fade_in_gain_at(&self, rel: Samples) -> f32 {
+        let elapsed = self.slice.map_or(0, |window| window.fade_in_elapsed_samples).saturating_add(rel);
+        if self.fade_in.len > 0 && elapsed < self.fade_in.len { self.fade_in.shape.gain(elapsed as f32 / self.fade_in.len as f32) } else { 1.0 }
+    }
+
+    pub fn fade_out_gain_at(&self, rel: Samples) -> f32 {
+        let from_end = self.length.saturating_sub(rel).saturating_add(self.slice.map_or(0, |window| window.fade_out_remaining_samples));
+        if self.fade_out.len > 0 && from_end <= self.fade_out.len {
+            self.fade_out.shape.gain(from_end as f32 / self.fade_out.len as f32)
+        } else {
+            1.0
+        }
+    }
+
     /// Gain (linear) at `rel` samples from the clip start: clip gain × envelope × fades.
     pub fn gain_at(&self, rel: Samples) -> f32 {
-        let mut db = self.gain_db;
-        if !self.gain_env.is_empty() {
-            db += env_value(&self.gain_env, rel);
-        }
-        let mut g = db_to_gain(db);
-        if self.fade_in.len > 0 && rel < self.fade_in.len {
-            g *= self.fade_in.shape.gain(rel as f32 / self.fade_in.len as f32);
-        }
-        let from_end = self.length - rel;
-        if self.fade_out.len > 0 && from_end <= self.fade_out.len {
-            g *= self.fade_out.shape.gain(from_end as f32 / self.fade_out.len as f32);
-        }
-        g
+        db_to_gain(self.gain_db_at(rel)) * self.fade_in_gain_at(rel) * self.fade_out_gain_at(rel)
     }
 
     /// Move the start edge to `new_start` keeping material anchored (trim start).
     pub fn trim_start_to(&mut self, new_start: Samples) {
+        if let Some(mut window) = self.slice {
+            let new_start = new_start.min(self.end().saturating_sub(1));
+            let delta = new_start.saturating_sub(self.start);
+            let length = self.length.saturating_sub(delta).max(1);
+            self.gain_env = self.sliced_gain_env(delta, length);
+            if self.is_audio() {
+                window.audio_origin_samples = window.audio_origin_samples.saturating_add(delta);
+            } else if let ClipContent::Video { offset, .. } = &mut self.content {
+                *offset = offset.saturating_add(delta);
+            }
+            window.fade_in_elapsed_samples = window.fade_in_elapsed_samples.saturating_add(delta);
+            self.slice = Some(window);
+            self.length = length;
+            self.start = new_start;
+            self.sync_point = self.sync_point.saturating_sub(delta).clamp(0, length);
+            return;
+        }
         let new_start = new_start.min(self.end() - 1);
         let delta = new_start - self.start;
         if let ClipContent::Audio { offset, .. } | ClipContent::Video { offset, .. } = &mut self.content {
@@ -220,6 +281,16 @@ impl Clip {
 
     /// Move the end edge to `new_end`.
     pub fn trim_end_to(&mut self, new_end: Samples) {
+        if let Some(mut window) = self.slice {
+            let new_end = new_end.max(self.start.saturating_add(1));
+            let length = new_end.saturating_sub(self.start).max(1);
+            self.gain_env = self.sliced_gain_env(0, length);
+            window.fade_out_remaining_samples = window.fade_out_remaining_samples.saturating_add(self.length.saturating_sub(length));
+            self.slice = Some(window);
+            self.length = length;
+            self.sync_point = self.sync_point.clamp(0, length);
+            return;
+        }
         let new_end = new_end.max(self.start + 1);
         self.length = new_end - self.start;
         self.clamp_fades();
@@ -227,23 +298,34 @@ impl Clip {
 
     /// Keep both fades within the clip.
     pub fn clamp_fades(&mut self) {
-        self.fade_in.len = self.fade_in.len.clamp(0, self.length);
-        self.fade_out.len = self.fade_out.len.clamp(0, self.length);
+        let maximum = if self.slice.is_some() { 1 << 40 } else { self.length };
+        self.fade_in.len = self.fade_in.len.clamp(0, maximum);
+        self.fade_out.len = self.fade_out.len.clamp(0, maximum);
+    }
+
+    /// Preserve interpolated values at both cuts; input envelopes must be finite and sorted.
+    pub fn sliced_gain_env(&self, origin: Samples, length: Samples) -> Vec<(Samples, f32)> {
+        if self.gain_env.is_empty() {
+            return Vec::new();
+        }
+        let end = origin.saturating_add(length);
+        let mut points = Vec::with_capacity(self.gain_env.len().saturating_add(2));
+        points.push((0, self.envelope_db_at(origin)));
+        points.extend(self.gain_env.iter().filter_map(|&(at, value)| (at > origin && at < end).then_some((at.saturating_sub(origin), value))));
+        points.push((length, self.envelope_db_at(end)));
+        points
     }
 }
 
 fn env_value(env: &[(Samples, f32)], at: Samples) -> f32 {
-    let mut prev: Option<(Samples, f32)> = None;
-    for &(t, v) in env {
-        if t >= at {
-            return match prev {
-                Some((pt, pv)) if t > pt => pv + (v - pv) * ((at - pt) as f32 / (t - pt) as f32),
-                _ => v,
-            };
+    let index = env.partition_point(|&(tick, _)| tick < at);
+    let Some(&(tick, value)) = env.get(index) else { return env.last().map_or(0.0, |&(_, value)| value) };
+    match index.checked_sub(1).and_then(|previous| env.get(previous)).copied() {
+        Some((previous, before)) if tick > previous => {
+            before + (value - before) * (at.saturating_sub(previous) as f32 / tick.saturating_sub(previous) as f32)
         }
-        prev = Some((t, v));
+        _ => value,
     }
-    prev.map_or(0.0, |(_, v)| v)
 }
 
 pub(crate) fn db_to_gain(db: f32) -> f32 {

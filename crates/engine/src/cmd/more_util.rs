@@ -140,7 +140,7 @@ fn max_render(s: &Session) -> Samples {
 /// Render the audio a clip plays, time-stretched (pitch preserved) to `out_len` samples, into a new
 /// source. Returns `Ok(None)` for MIDI clips or missing audio.
 pub fn render_stretched(s: &mut Session, cmd: &str, c: &Clip, out_len: Samples) -> Result<Option<SourceId>> {
-    let ClipContent::Audio { source, offset } = c.content else { return Ok(None) };
+    let ClipContent::Audio { source, .. } = c.content else { return Ok(None) };
     let Some(audio) = s.pool.get(source).cloned() else { return Ok(None) };
     if out_len <= 0 || out_len > max_render(s) {
         return Err(bad(cmd, "the target length must be between 1 sample and one hour"));
@@ -151,16 +151,30 @@ pub fn render_stretched(s: &mut Session, cmd: &str, c: &Clip, out_len: Samples) 
     if !(0.1..=10.0).contains(&ratio) {
         return Err(bad(cmd, format!("stretch ratio {ratio:.3} is outside 0.1..10")));
     }
-    let a = usize::try_from(offset.max(0)).unwrap_or(0);
+    let origin = c.source_position(0);
+    if !origin.is_finite() || origin < 0.0 {
+        return Err(bad(cmd, "the clip source position is invalid"));
+    }
     let n = src_len as usize;
     let ch: Vec<Vec<f32>> = audio
         .buffer
         .channels
         .iter()
         .map(|x| {
-            let mut v: Vec<f32> = x.iter().skip(a).take(n).copied().collect();
-            v.resize(n, 0.0);
-            v
+            (0..n)
+                .map(|i| {
+                    let at = origin + i as f64;
+                    let lo = at.floor();
+                    let a = x.get(lo as usize).copied().unwrap_or(0.0);
+                    let fraction = at - lo;
+                    if fraction == 0.0 {
+                        a
+                    } else {
+                        let b = x.get((lo as usize).saturating_add(1)).copied().unwrap_or(0.0);
+                        (f64::from(a) * (1.0 - fraction) + f64::from(b) * fraction) as f32
+                    }
+                })
+                .collect()
         })
         .collect();
     let sr = s.sample_rate;

@@ -1,6 +1,6 @@
 # Where SoundCraft falls short of Pro Tools
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (MX-38 fidelity/state/delivery acceptance; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (ED-46 reusable definitions and acceptance; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Every known shortfall, one entry each, ranked by how much it stops a Pro Tools user from doing
 real work in SoundCraft. This is the work list: pick from the top. Rows marked **alpha blocker**
@@ -12,6 +12,7 @@ Estimates marked "≈" are judgements; issue numbers are `storytold/soundcraft` 
 When you close a gap, delete its entry (or shrink it) in the same PR, and bump the timestamp.
 
 - **Mix bounce (MX-38):** [Fidelity/state/delivery acceptance](bounce-delivery.md) covers strict frame/work admission, history/tail source cutoff, detached prepared/editor state and exclusive output publication. The original comparison criterion remains open; physical capture, cross-platform runtime, Unicode filesystem aliases, arbitrary external hosts and broad delivery options need separate evidence.
+- **Reusable capture (ED-46):** [Detached definitions](reusable-clips.md) preserve Audio/MIDI/Video selection payloads after every timeline instance is removed. Native lifecycle/analytic references, prepared allocation/timing and UI evidence are separate gates. The searchable/placeable Clip List (ED-20), full MIDI controller dispatch and arbitrary processor-history continuation remain separate work.
 
 ## Ranked gaps
 

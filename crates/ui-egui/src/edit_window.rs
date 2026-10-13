@@ -1183,7 +1183,7 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
     let body_r = Rect::from_min_max(pos2(r.min.x, r.min.y + name_h), r.max);
     let vis = body_r.intersect(lane);
     match &clip.content {
-        ClipContent::Audio { source, offset } => {
+        ClipContent::Audio { source, .. } => {
             if let Some(audio) = s.pool.get(*source) {
                 let nch = track.channels().min(audio.peaks.len().max(1)).max(1);
                 let ch_h = body_r.height() / nch as f32;
@@ -1193,8 +1193,8 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
                 let outlines = s.edit.flag("waveform.outlines");
                 let cols = vis.width().max(0.0) as usize;
                 if cols > 0 && vis.height() > 2.0 {
-                    let a = (offset + sample_at(s, tl, vis.min.x) - clip.start) as f64;
-                    let b = (offset + sample_at(s, tl, vis.max.x) - clip.start) as f64;
+                    let a = clip.source_position(sample_at(s, tl, vis.min.x).saturating_sub(clip.start));
+                    let b = clip.source_position(sample_at(s, tl, vis.max.x).saturating_sub(clip.start));
                     for ch in 0..nch {
                         let Some(pk) = audio.peaks.get(ch % audio.peaks.len().max(1)) else { continue };
                         let cy = body_r.min.y + ch_h * (ch as f32 + 0.5);
@@ -1247,10 +1247,16 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
             let (lo, hi) = if lo > hi { (48, 72) } else { (lo.saturating_sub(2), hi.saturating_add(2)) };
             let span = f32::from(hi.saturating_sub(lo).max(1));
             let base = s.tempo.samples_to_ticks(clip.start, s.sample_rate);
+            let base_sample = s.tempo.tick_to_samples(base, s.sample_rate);
             let p = painter.with_clip_rect(vis);
             for n in &sequence.notes {
-                let a = s.tempo.tick_to_samples(base + n.start, s.sample_rate);
-                let b = s.tempo.tick_to_samples(base + n.start + n.length, s.sample_rate).min(clip.end());
+                let a = clip.start.saturating_add(s.tempo.tick_to_samples(base.saturating_add(n.start), s.sample_rate).saturating_sub(base_sample));
+                let b = clip
+                    .start
+                    .saturating_add(
+                        s.tempo.tick_to_samples(base.saturating_add(n.start).saturating_add(n.length), s.sample_rate).saturating_sub(base_sample),
+                    )
+                    .min(clip.end());
                 let nx0 = x_of(s, tl, a);
                 let nx1 = x_of(s, tl, b).max(nx0 + 2.0);
                 if nx1 < vis.min.x || nx0 > vis.max.x {
@@ -1293,23 +1299,29 @@ fn draw_clip(app: &SoundApp, painter: &egui::Painter, s: &Session, track: &Track
     }
     // Fades.
     let fade_col = Color32::from_rgba_unmultiplied(255, 255, 255, 90);
-    if clip.fade_in.len > 0 {
-        let fx = x_of(s, tl, clip.start + clip.fade_in.len);
+    let fade_in_elapsed = clip.slice.as_ref().map_or(0, |slice| slice.fade_in_elapsed_samples);
+    let fade_out_remaining = clip.slice.as_ref().map_or(0, |slice| slice.fade_out_remaining_samples);
+    let fade_in_visible = clip.fade_in.len.saturating_sub(fade_in_elapsed).clamp(0, clip.length);
+    if fade_in_visible > 0 {
+        let fx = x_of(s, tl, clip.start.saturating_add(fade_in_visible));
         let pts: Vec<Pos2> = (0..=16)
             .map(|i| {
                 let k = i as f32 / 16.0;
-                pos2(x0 + (fx - x0) * k, body_r.max.y - body_r.height() * clip.fade_in.shape.gain(k))
+                let rel = (fade_in_visible as f64 * f64::from(k)).round() as i64;
+                pos2(x0 + (fx - x0) * k, body_r.max.y - body_r.height() * clip.fade_in_gain_at(rel))
             })
             .collect();
         painter.add(Shape::line(pts, Stroke::new(1.2, fade_col)));
         painter.line_segment([pos2(x0, body_r.min.y), pos2(fx, body_r.min.y)], Stroke::new(1.0, fade_col));
     }
-    if clip.fade_out.len > 0 {
-        let fx = x_of(s, tl, clip.end() - clip.fade_out.len);
+    let fade_out_start = clip.length.saturating_add(fade_out_remaining).saturating_sub(clip.fade_out.len).clamp(0, clip.length);
+    if clip.fade_out.len > 0 && fade_out_start < clip.length {
+        let fx = x_of(s, tl, clip.start.saturating_add(fade_out_start));
         let pts: Vec<Pos2> = (0..=16)
             .map(|i| {
                 let k = i as f32 / 16.0;
-                pos2(fx + (x1 - fx) * k, body_r.max.y - body_r.height() * clip.fade_out.shape.gain(1.0 - k))
+                let rel = fade_out_start.saturating_add(((clip.length - fade_out_start) as f64 * f64::from(k)).round() as i64);
+                pos2(fx + (x1 - fx) * k, body_r.max.y - body_r.height() * clip.fade_out_gain_at(rel))
             })
             .collect();
         painter.add(Shape::line(pts, Stroke::new(1.2, fade_col)));

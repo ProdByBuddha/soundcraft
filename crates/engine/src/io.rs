@@ -780,6 +780,10 @@ pub fn render_clip_gain(e: &mut Engine, id: soundcraft_model::ClipId) -> Result<
         // The new source is the clip as it already sounds, stretch included.
         // Keeping the old ratio would play that audio through the stretch again.
         cl.stretch = 1.0;
+        if let Some(slice) = &mut cl.slice {
+            slice.audio_origin_samples = 0;
+            slice.audio_phase_samples = 0.0;
+        }
     }
     Ok(true)
 }
@@ -1093,7 +1097,18 @@ fn store_wav_with_policy(dir: &Path, stem: &str, bytes: &[u8], reject_links: boo
 
 /// Open a `.scraft` session and decode its audio files (missing files are reported, not fatal).
 pub fn open_session(e: &mut Engine, path: &str) -> Result<Vec<String>> {
-    let text = std::fs::read_to_string(path).map_err(|err| EngineError::Io(format!("{path}: {err}")))?;
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).map_err(|err| EngineError::Io(format!("{path}: {err}")))?;
+    let limit = Session::MAX_JSON_BYTES as u64;
+    if file.metadata().map_err(|err| EngineError::Io(format!("{path}: {err}")))?.len() > limit {
+        return Err(EngineError::Io("session JSON exceeds 128 MiB".into()));
+    }
+    // The bound also applies if a file grows after metadata admission.
+    let mut text = String::new();
+    file.take(limit.saturating_add(1)).read_to_string(&mut text).map_err(|err| EngineError::Io(format!("{path}: {err}")))?;
+    if text.len() > Session::MAX_JSON_BYTES {
+        return Err(EngineError::Io("session JSON exceeds 128 MiB".into()));
+    }
     let mut s = Session::from_json(&text).map_err(|err| EngineError::Io(err.to_string()))?;
     let dir = Path::new(path).parent().map(Path::to_path_buf).unwrap_or_default();
     let mut missing = Vec::new();
@@ -1266,6 +1281,9 @@ pub fn open_session_bytes(e: &mut Engine, name: &str, bytes: &[u8]) -> Result<Ve
     let (text, mut files) = if bytes.starts_with(b"PK\x03\x04") {
         read_bundle(bytes)?
     } else {
+        if bytes.len() > Session::MAX_JSON_BYTES {
+            return Err(EngineError::Io("session JSON exceeds 128 MiB".into()));
+        }
         (
             String::from_utf8(bytes.to_vec()).map_err(|_| EngineError::Io(format!("{name}: not a SoundCraft session")))?,
             std::collections::HashMap::new(),
@@ -1347,6 +1365,10 @@ fn read_bundle(bytes: &[u8]) -> Result<(String, std::collections::HashMap<String
         }
         let rel = f.name().map_err(zerr)?.to_string();
         let size = f.size();
+        let is_session = !rel.contains('/') && Path::new(&rel).extension().and_then(|x| x.to_str()) == Some(soundcraft_model::SESSION_EXTENSION);
+        if is_session && size > Session::MAX_JSON_BYTES as u64 {
+            return Err(EngineError::Io("bundle: session JSON exceeds 128 MiB".into()));
+        }
         total = total.saturating_add(size);
         if total > MAX_BUNDLE_BYTES {
             return Err(EngineError::Io("bundle: too large".into()));
@@ -1354,7 +1376,6 @@ fn read_bundle(bytes: &[u8]) -> Result<(String, std::collections::HashMap<String
         let mut data = Vec::new();
         // The declared size is hostile too: never read past it.
         f.by_ref().take(size).read_to_end(&mut data).map_err(|err| EngineError::Io(format!("bundle: {rel}: {err}")))?;
-        let is_session = !rel.contains('/') && Path::new(&rel).extension().and_then(|x| x.to_str()) == Some(soundcraft_model::SESSION_EXTENSION);
         if is_session && text.is_none() {
             text = Some(String::from_utf8(data).map_err(|_| EngineError::Io(format!("bundle: {rel} is not text")))?);
         } else {
