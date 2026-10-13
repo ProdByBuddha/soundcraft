@@ -70,7 +70,7 @@ impl AutoParam {
         match self {
             AutoParam::Volume => "volume".into(),
             AutoParam::Pan(0) => "pan".into(),
-            AutoParam::Pan(i) => format!("pan {}", i + 1),
+            AutoParam::Pan(i) => format!("pan {}", u16::from(*i) + 1),
             AutoParam::Mute => "mute".into(),
             AutoParam::SendLevel(i) => format!("send {} level", slot_letter(*i)),
             AutoParam::SendPan(i) => format!("send {} pan", slot_letter(*i)),
@@ -80,7 +80,8 @@ impl AutoParam {
     }
     /// Parse ids like `volume`, `pan`, `pan2`, `mute`, `send_a_level`, `plugin:a:threshold`.
     pub fn parse(s: &str) -> Option<AutoParam> {
-        let s = s.trim().to_ascii_lowercase();
+        let original = s.trim();
+        let s = original.to_ascii_lowercase();
         match s.as_str() {
             "volume" | "vol" => return Some(AutoParam::Volume),
             "pan" | "pan1" => return Some(AutoParam::Pan(0)),
@@ -99,7 +100,8 @@ impl AutoParam {
             };
         }
         if let Some(rest) = s.strip_prefix("plugin:") {
-            let (slot, param) = rest.split_once(':')?;
+            let _ = rest;
+            let (slot, param) = original.get(7..)?.split_once(':')?;
             return Some(AutoParam::Plugin { slot: letter_slot(slot)?, param: param.to_string() });
         }
         None
@@ -148,7 +150,7 @@ impl AutomationLane {
     pub fn value_at(&self, at: Samples, default: f32) -> f32 {
         let pts = &self.points;
         let Some(first) = pts.first() else { return default };
-        if at <= first.at {
+        if at < first.at {
             return first.value;
         }
         let idx = pts.partition_point(|p| p.at <= at);
@@ -158,7 +160,8 @@ impl AutomationLane {
                 if matches!(self.param, AutoParam::Mute | AutoParam::SendMute(_)) {
                     return a.value;
                 }
-                a.value + (b.value - a.value) * ((at - a.at) as f32 / (b.at - a.at) as f32)
+                let fraction = (i128::from(at) - i128::from(a.at)) as f64 / (i128::from(b.at) - i128::from(a.at)) as f64;
+                (f64::from(a.value) + (f64::from(b.value) - f64::from(a.value)) * fraction) as f32
             }
             (Some(a), _) => a.value,
             _ => default,
@@ -211,8 +214,9 @@ impl AutomationLane {
         let mut last = 0usize;
         for i in 1..self.points.len() - 1 {
             let (Some(a), Some(b), Some(c)) = (self.points.get(last), self.points.get(i), self.points.get(i + 1)) else { continue };
-            let span = (c.at - a.at) as f32;
-            let interp = if span > 0.0 { a.value + (c.value - a.value) * ((b.at - a.at) as f32 / span) } else { a.value };
+            let span = (i128::from(c.at) - i128::from(a.at)) as f64;
+            let fraction = (i128::from(b.at) - i128::from(a.at)) as f64 / span.max(1.0);
+            let interp = if span > 0.0 { (f64::from(a.value) + (f64::from(c.value) - f64::from(a.value)) * fraction) as f32 } else { a.value };
             if (interp - b.value).abs() <= tolerance {
                 if let Some(k) = keep.get_mut(i) {
                     *k = false;

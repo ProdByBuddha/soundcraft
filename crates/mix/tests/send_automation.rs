@@ -231,7 +231,7 @@ fn mute_preserves_routing_for_mono_surround_and_sixteen_channels() {
     }
 }
 #[test]
-fn wider_source_and_destination_send_pan_keep_static_routing() {
+fn send_pan_matches_supported_width_laws_and_preserves_wide_fallback() {
     for (src_fmt, dst_fmt) in [
         (ChannelFormat::Stereo, ChannelFormat::Stereo),
         (ChannelFormat::Mono, ChannelFormat::Surround51),
@@ -241,12 +241,41 @@ fn wider_source_and_destination_send_pan_keep_static_routing() {
         s.busses.iter_mut().find(|b| b.id == bus).unwrap().format = dst_fmt;
         let reference = render_bus(&s, bus, Range::new(0, LEN as i64), 37);
         assert!(reference.iter().flatten().any(|v| v.abs() > 0.05));
+        let mut static_control = s.clone();
         lane(&mut s, t, AutoParam::SendPan(0), &PAN);
         assert_shape(&reference, dst_fmt.channels(), LEN);
         let actual = render_bus(&s, bus, Range::new(0, LEN as i64), 37);
         assert_shape(&actual, dst_fmt.channels(), LEN);
-        assert_eq!(actual, reference);
-        assert_eq!(render_bus(&s, bus, Range::new(0, LEN as i64), 37), reference);
+        assert!(actual.iter().flatten().all(|sample| sample.is_finite()));
+        if src_fmt == ChannelFormat::Stereo {
+            for (ch, channel) in actual.iter().enumerate() {
+                for (n, &sample) in channel.iter().enumerate() {
+                    let pan = expected_pan(n as i64);
+                    let balance = if ch == 0 { (1.0 - pan).min(1.0) } else { (1.0 + pan).min(1.0) };
+                    let expected = f64::from(signal(ch, n)) * balance;
+                    assert!((f64::from(sample) - expected).abs() < 2e-7, "stereo channel {ch}, at {n}: {sample} vs {expected}");
+                }
+            }
+            assert!(actual.iter().zip(&reference).any(|(a, r)| a.iter().zip(r).any(|(a, r)| (*a - *r).abs() > 0.05)));
+            assert_eq!(render_bus(&s, bus, Range::new(0, LEN as i64), 37), actual);
+        } else if src_fmt == ChannelFormat::Mono {
+            // Static spatial routing calibrates all six channels independently at each sample.
+            for n in 0..LEN {
+                static_control.track_mut(t).unwrap().mixer.sends[0].as_mut().unwrap().pan = expected_pan(n as i64) as f32;
+                let expected = render_bus(&static_control, bus, Range::new(n as i64, n as i64 + 1), 37);
+                assert_shape(&expected, 6, 1);
+                assert!(expected.iter().flatten().all(|sample| sample.is_finite()));
+                for (ch, (actual_channel, expected_channel)) in actual.iter().zip(&expected).enumerate() {
+                    assert_eq!(actual_channel[n], expected_channel[0], "spatial channel {ch}, at {n}");
+                }
+            }
+            assert!(actual.iter().zip(&reference).any(|(a, r)| a.iter().zip(r).any(|(a, r)| (*a - *r).abs() > 0.05)));
+            assert_eq!(render_bus(&s, bus, Range::new(0, LEN as i64), 37), actual);
+        } else {
+            // A wider source retains its existing static matrix; this is not spatial automation acceptance.
+            assert_eq!(actual, reference);
+            assert_eq!(render_bus(&s, bus, Range::new(0, LEN as i64), 37), reference);
+        }
     }
 }
 #[test]
@@ -307,21 +336,66 @@ fn slots_a_and_j_and_absent_slots_do_not_drive_each_other() {
     check(&render_bus(&s, other, Range::new(0, LEN as i64), 100), 0, LEN, PanLaw::Minus3, 1.0);
 }
 #[test]
-fn malformed_lanes_fall_back_without_changing_document() {
+fn raw_lanes_compile_or_reject_without_changing_document() {
+    use soundcraft_mix::{OfflineRenderer, SessionPreparer, try_render_range};
+
     for points in [
         vec![AutomationPoint { at: 3, value: -1.0 }, AutomationPoint { at: 1, value: 1.0 }],
         vec![AutomationPoint { at: 0, value: f32::NAN }],
         vec![AutomationPoint { at: 0, value: f32::INFINITY }],
     ] {
         let (mut s, t, _) = fixture(ChannelFormat::Mono);
+        let valid = s.clone();
         let reference = render_range(&s, Range::new(0, LEN as i64), 100);
+        assert_shape(&reference, 2, LEN);
+        assert!(reference.iter().flatten().all(|sample| sample.is_finite()));
+        assert!(reference.iter().flatten().any(|sample| sample.abs() > 0.05));
         for param in [AutoParam::SendPan(0), AutoParam::SendMute(0)] {
             let mut lane = AutomationLane::new(param);
             lane.points = points.clone();
             s.track_mut(t).unwrap().automation.push(lane);
         }
         let before: Vec<_> = s.track(t).unwrap().automation.iter().flat_map(|l| l.points.iter().map(|p| (p.at, p.value.to_bits()))).collect();
-        assert_eq!(render_range(&s, Range::new(0, LEN as i64), 100), reference);
+        if points.iter().all(|point| point.value.is_finite()) {
+            let actual = render_range(&s, Range::new(0, LEN as i64), 100);
+            assert_shape(&actual, 2, LEN);
+            assert!(actual.iter().flatten().all(|sample| sample.is_finite()));
+            for (ch, channel) in actual.iter().enumerate() {
+                for (n, &sample) in channel.iter().enumerate() {
+                    let expected = if n < 3 || ch == 1 { 0.0 } else { f64::from(signal(0, n)) };
+                    assert!((f64::from(sample) - expected).abs() < 2e-7, "sorted channel {ch}, at {n}: {sample} vs {expected}");
+                }
+            }
+            assert!(actual.iter().zip(&reference).any(|(a, r)| a.iter().zip(r).any(|(a, r)| (*a - *r).abs() > 0.05)));
+            assert_eq!(render_range(&s, Range::new(0, LEN as i64), 100), actual);
+        } else {
+            let mut preparer = SessionPreparer::default();
+            let error = preparer.prepare(Arc::new(s.clone()), 74, 100).err().expect("nonfinite points must reject typed preparation");
+            assert_eq!(error.0, "automation contains a nonfinite value");
+            let error = try_render_range(&s, Range::new(0, LEN as i64), 100).expect_err("nonfinite points must reject fallible rendering");
+            assert_eq!(error.0, "automation contains a nonfinite value");
+            let mut renderer = OfflineRenderer::prepare(Arc::new(valid), 100).unwrap();
+            let error = renderer.reprepare(Arc::new(s.clone())).expect_err("nonfinite reprepare must fail while preserving the valid renderer");
+            assert_eq!(error.0, "automation contains a nonfinite value");
+            let mut actual = vec![Vec::new(), Vec::new()];
+            let mut start = 0;
+            while start < LEN {
+                let frames = renderer.mix().max_block().min(LEN - start);
+                let mut block = vec![vec![0.0; frames]; 2];
+                renderer.render(start as i64, frames, &mut block).unwrap();
+                assert_shape(&block, 2, frames);
+                assert!(block.iter().flatten().all(|sample| sample.is_finite()));
+                for (out, block) in actual.iter_mut().zip(block) {
+                    out.extend(block);
+                }
+                start += frames;
+            }
+            assert_shape(&actual, 2, LEN);
+            assert_eq!(actual, reference);
+            assert!(actual.iter().flatten().any(|sample| sample.abs() > 0.05));
+            // Missing-instance compatibility does not swallow a nonfinite-plan rejection.
+            assert!(render_range(&s, Range::new(0, LEN as i64), 100).is_empty());
+        }
         let after: Vec<_> = s.track(t).unwrap().automation.iter().flat_map(|l| l.points.iter().map(|p| (p.at, p.value.to_bits()))).collect();
         assert_eq!(before, after);
     }

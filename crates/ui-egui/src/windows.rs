@@ -445,7 +445,10 @@ pub fn playback_engine(app: &mut SoundApp, ctx: &egui::Context) {
             let _ = app.run("options.delay_compensation", json!({"value": dc}));
         }
         if ui.button("Reconnect audio device").clicked() {
-            app.player = Some(soundcraft_playback::Player::new(app.engine.session_arc()));
+            match soundcraft_playback::Player::try_new(app.engine.session_arc(), app.engine.session_generation()) {
+                Ok(player) => app.player = Some(player),
+                Err(error) => app.ui.status = error.to_string(),
+            }
         }
     });
     app.ui.show_playback_engine = open;

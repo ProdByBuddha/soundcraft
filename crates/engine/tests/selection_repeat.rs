@@ -159,19 +159,23 @@ fn repeated_volume_curve_reaches_the_mixer_and_matches_calculated_pcm() {
         let original_pcm = soundcraft_mix::render_range(&original, Range::new(0, 1024), 16);
         assert_eq!(original_pcm.len(), 2);
         assert!(original_pcm.iter().all(|channel| channel.len() == 1024));
-        // Independently calculated from the declared dB ramp, DC amplitudes and documented
-        // mixer gain interpolation between each block's first/last sample, with hard L/R pan.
+        // Independently calculated from the declared sample-position dB ramp and DC amplitudes,
+        // with hard L/R pan. The reference is independent of the rendering block size.
         let db = |at: usize| if at <= 512 { -6.0 - 6.0 * at as f64 / 512.0 } else { -12.0 + 9.0 * (at - 512) as f64 / 511.0 };
         let mut expected = vec![vec![0.0f32; 1024]; 2];
+        let mut old_block_law_gap = 0.0f32;
         for (channel, amplitude) in expected.iter_mut().zip([0.5, -0.25]) {
             for (at, value) in channel.iter_mut().enumerate() {
+                *value = (amplitude * 10f64.powf(db(at) / 20.0)) as f32;
+                // Ensure the former 16-frame gain interpolation cannot satisfy this reference.
                 let block_start = at / 16 * 16;
                 let gain0 = 10f64.powf(db(block_start) / 20.0);
                 let gain1 = 10f64.powf(db(block_start + 15) / 20.0);
                 let gain = gain0 + (gain1 - gain0) * ((at - block_start) as f64 / 15.0);
-                *value = (amplitude * gain) as f32;
+                old_block_law_gap = old_block_law_gap.max((*value - (amplitude * gain) as f32).abs());
             }
         }
+        assert!(old_block_law_gap > 0.000002, "reference must distinguish the former block-dependent gain law");
         for (channel, calculated) in original_pcm.iter().zip(&expected) {
             for (actual, expected) in channel.iter().zip(calculated) {
                 assert!((actual - expected).abs() < 0.000002, "baseline mixer PCM {actual} != calculated {expected}");

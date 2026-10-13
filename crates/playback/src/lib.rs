@@ -25,7 +25,9 @@
 pub mod record;
 
 use soundcraft_dsp::{Plugin, PluginEditor};
-use soundcraft_mix::{MAX_CHANNELS, MixEngine, PreparedInstance, StripMeter, itu_stereo_fold, main_channels};
+#[cfg(test)]
+use soundcraft_mix::PreparedInstance;
+use soundcraft_mix::{MAX_CHANNELS, MixEngine, PreparationError, PreparedMixUpdate, SessionPreparer, StripMeter, itu_stereo_fold, main_channels};
 use soundcraft_model::{Session, TrackId};
 use soundcraft_time::{Range, Samples};
 use std::collections::HashMap;
@@ -46,15 +48,37 @@ pub struct MeterSnapshot {
     pub main: StripMeter,
 }
 
+#[cfg(test)]
+mod automation_tests;
+
 /// Plugin states read from the live instances: `(track, slot or INSTRUMENT_SLOT, state)`.
 pub type PluginStates = Vec<(TrackId, usize, Vec<u8>)>;
 
 /// A parameter edit made in a plugin's own editor: `(track, slot, param id, value)`.
 pub type EditorEdit = (TrackId, usize, String, f32);
 
+/// One fixed-size envelope allocated on the control thread before publication. The callback
+/// fills the initially empty retired slot and returns this same allocation for control-thread
+/// disposal. Its storage is separate from the prepared-workspace admission estimate; queued
+/// updates and vendor allocations are not a total-memory guarantee.
+struct PreparedCommand {
+    update: Option<PreparedMixUpdate>,
+    pending: Vec<Vec<f32>>,
+    fold: [(f32, f32); MAX_CHANNELS],
+    retired: Option<RetiredWorkspace>,
+}
+
+struct RetiredWorkspace {
+    mix: MixEngine,
+    pending: Vec<Vec<f32>>,
+    session: Arc<Session>,
+}
+
 enum Cmd {
     /// A new snapshot plus the third-party instances it needs (created on the UI thread).
+    #[cfg(test)]
     Session(Arc<Session>, Vec<PreparedInstance>),
+    Prepared(Box<PreparedCommand>),
     /// Read every plugin state and reply.
     CaptureStates(Sender<PluginStates>),
     Input(Arc<record::InputRing>),
@@ -66,6 +90,46 @@ enum Cmd {
     },
     Stop,
     Locate(Samples),
+}
+
+impl Cmd {
+    /// Called only by the control-thread producer (or headless test setup).
+    fn prepared(update: PreparedMixUpdate, pending: Vec<Vec<f32>>, fold: [(f32, f32); MAX_CHANNELS]) -> Self {
+        Self::Prepared(Box::new(PreparedCommand { update: Some(update), pending, fold, retired: None }))
+    }
+}
+
+enum Retirement {
+    Plugins(Vec<Box<dyn Plugin>>),
+    Workspace(Box<PreparedCommand>),
+    Audio(Box<AudioState>),
+}
+
+impl Retirement {
+    fn dispose(self) {
+        match self {
+            Self::Plugins(plugins) => drop(plugins),
+            Self::Workspace(mut command) => {
+                if let Some(workspace) = command.retired.take() {
+                    drop(workspace.mix);
+                    drop(workspace.pending);
+                    drop(workspace.session);
+                }
+                // Also disposes a rejected/malformed update and frees the original envelope;
+                // this method is reached only by the control-thread retirement receiver.
+                drop(command);
+            }
+            Self::Audio(state) => drop(state),
+        }
+    }
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        match self {
+            Self::Plugins(plugins) => plugins.len(),
+            Self::Workspace(_) => 0,
+            Self::Audio(_) => 0,
+        }
+    }
 }
 
 struct Shared {
@@ -96,7 +160,13 @@ struct AudioState {
     input: Option<Arc<record::InputRing>>,
     recording: bool,
     /// Retired plugin instances go back to the UI thread to be dropped there.
-    garbage: Sender<Vec<Box<dyn Plugin>>>,
+    garbage: Sender<Retirement>,
+    // Preserve a rejected retirement rather than dropping its heavy error value here.
+    // Player keeps the receiver alive through shutdown; only private misuse can reject it.
+    rejected_retirement: Option<Retirement>,
+    /// A malformed private prepared envelope is returned intact and forces silence until a
+    /// later valid prepared snapshot is installed; Play/monitoring cannot bypass the guard.
+    invalid_prepared: bool,
 }
 
 fn new_engine(sr: f32) -> MixEngine {
@@ -107,11 +177,13 @@ fn new_engine(sr: f32) -> MixEngine {
 }
 
 impl AudioState {
-    fn new(rx: Receiver<Cmd>, shared: Arc<Shared>, session: Arc<Session>, device_rate: f64, garbage: Sender<Vec<Box<dyn Plugin>>>) -> Self {
+    fn new(rx: Receiver<Cmd>, shared: Arc<Shared>, session: Arc<Session>, device_rate: f64, garbage: Sender<Retirement>) -> Self {
         let sr = session.sample_rate.as_f64() as f32;
         let nch = main_channels(&session);
         AudioState {
             garbage,
+            rejected_retirement: None,
+            invalid_prepared: false,
             fold: fold_gains(&session),
             rx,
             shared,
@@ -131,20 +203,27 @@ impl AudioState {
     }
 
     fn drain(&mut self) {
+        if self.rejected_retirement.is_some() {
+            self.playing = false;
+            return;
+        }
+        #[cfg(test)]
         let mut changed = false;
         while let Ok(c) = self.rx.try_recv() {
             match c {
                 Cmd::Input(r) => self.input = Some(r),
                 Cmd::Recording(r) => self.recording = r,
                 Cmd::CaptureStates(reply) => {
+                    #[cfg(test)]
                     self.mix.ensure_synced(&self.session);
                     let _ = reply.send(self.mix.capture_states());
                 }
+                #[cfg(test)]
                 Cmd::Session(s, instances) => {
                     changed = true;
                     if (s.sample_rate.as_f64() - self.session.sample_rate.as_f64()).abs() > 0.5 {
                         let mut old = std::mem::replace(&mut self.mix, new_engine(s.sample_rate.as_f64() as f32));
-                        let _ = self.garbage.send(old.drain_plugins());
+                        self.retire(Retirement::Plugins(old.drain_plugins()));
                     }
                     self.mix.adopt(instances);
                     // The main format changed (a document edit, not steady state): resize.
@@ -156,6 +235,29 @@ impl AudioState {
                     }
                     self.fold = fold_gains(&s);
                     self.session = s;
+                }
+                Cmd::Prepared(mut command) => {
+                    // The sole producer supplies Some(update) and an empty retired slot. Do
+                    // not overwrite populated retirement storage or drop a malformed Box here.
+                    let update = if command.retired.is_none() { command.update.take() } else { None };
+                    let Some(update) = update else {
+                        self.invalid_prepared = true;
+                        self.playing = false;
+                        self.pending_len = 0;
+                        self.read = 0.0;
+                        self.retire(Retirement::Workspace(command));
+                        break;
+                    };
+                    let session = Arc::clone(update.source());
+                    let old_mix = self.mix.install_prepared(update);
+                    let old_pending = std::mem::replace(&mut self.pending, std::mem::take(&mut command.pending));
+                    let old_session = std::mem::replace(&mut self.session, session);
+                    self.fold = command.fold;
+                    self.pending_len = 0;
+                    self.read = 0.0;
+                    self.invalid_prepared = false;
+                    command.retired = Some(RetiredWorkspace { mix: old_mix, pending: old_pending, session: old_session });
+                    self.retire(Retirement::Workspace(command));
                 }
                 Cmd::Play { from, end, looped } => {
                     self.pos = from;
@@ -178,7 +280,15 @@ impl AudioState {
                     self.read = 0.0;
                 }
             }
+            if self.rejected_retirement.is_some() {
+                self.playing = false;
+                break;
+            }
         }
+        if self.invalid_prepared {
+            self.playing = false;
+        }
+        #[cfg(test)]
         if changed {
             // Place adopted instances now (not only once playback starts), so state captures and
             // editors see them; `sync` creates no third-party plugins here.
@@ -189,15 +299,32 @@ impl AudioState {
     }
 
     fn send_garbage(&mut self) {
+        if self.rejected_retirement.is_some() {
+            return;
+        }
         let g = self.mix.take_retired();
         if !g.is_empty() {
-            let _ = self.garbage.send(g);
+            self.retire(Retirement::Plugins(g));
+        }
+    }
+
+    fn retire(&mut self, retired: Retirement) {
+        if let Err(error) = self.garbage.send(retired) {
+            self.rejected_retirement = Some(error.0);
+            self.playing = false;
         }
     }
 
     /// Render the next block at the session rate into `pending`.
     fn render_next(&mut self, quantum: usize) {
         let mut n = quantum.clamp(1, BLOCK);
+        if self.invalid_prepared {
+            for channel in &mut self.pending {
+                channel.fill(0.0);
+            }
+            self.pending_len = n;
+            return;
+        }
         if let Some(l) = self.looped
             && self.pos >= l.end
         {
@@ -231,7 +358,11 @@ impl AudioState {
         }
         self.mix.monitor_only = !self.playing;
         self.mix.recording = self.recording;
-        self.mix.render(&self.session, self.pos, n, &mut self.pending);
+        if self.mix.render_prepared(self.pos, n, &mut self.pending).is_err() {
+            for channel in &mut self.pending {
+                channel.iter_mut().take(n).for_each(|sample| *sample = 0.0);
+            }
+        }
         self.send_garbage();
         self.pending_len = n;
         if let Ok(mut m) = self.shared.meters.try_lock() {
@@ -254,6 +385,10 @@ impl AudioState {
     /// Fill an interleaved device buffer.
     fn fill(&mut self, out: &mut [f32], channels: usize) {
         self.drain();
+        if self.rejected_retirement.is_some() || self.invalid_prepared {
+            out.fill(0.0);
+            return;
+        }
         let channels = channels.max(1);
         let monitoring = self.input.is_some() && self.session.tracks.iter().any(|t| t.mixer.input_monitor || t.mixer.record_arm);
         if !self.playing && !monitoring {
@@ -317,25 +452,109 @@ impl AudioState {
     }
 }
 
+/// Exactly one preallocated audio state circulates through this capacity-one slot. The
+/// control owner never sends or registers a blocking/select waiter after construction.
+struct StateExchange {
+    sender: crossbeam_channel::Sender<Box<AudioState>>,
+    receiver: crossbeam_channel::Receiver<Box<AudioState>>,
+    shutdown: AtomicBool,
+    returned_to_retirement: AtomicBool,
+    initial_failure: Mutex<Option<Box<AudioState>>>,
+}
+
+impl StateExchange {
+    fn new(state: AudioState) -> Arc<Self> {
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        // On the control thread, before any producer is published.
+        let failed = sender.try_send(Box::new(state)).err().map(crossbeam_channel::TrySendError::into_inner);
+        let shutdown = failed.is_some();
+        Arc::new(Self {
+            sender,
+            receiver,
+            shutdown: AtomicBool::new(shutdown),
+            returned_to_retirement: AtomicBool::new(false),
+            initial_failure: Mutex::new(failed),
+        })
+    }
+
+    fn reclaim(&self) -> Option<Box<AudioState>> {
+        if let Some(state) = self.initial_failure.lock().unwrap_or_else(PoisonError::into_inner).take() {
+            return Some(state);
+        }
+        loop {
+            match self.receiver.try_recv() {
+                Ok(state) => return Some(state),
+                Err(crossbeam_channel::TryRecvError::Disconnected) => return None,
+                Err(crossbeam_channel::TryRecvError::Empty) => {
+                    if self.returned_to_retirement.load(Ordering::Acquire) {
+                        return None;
+                    }
+                    // Only shutdown waits; no crossbeam waiter is registered, so callback
+                    // notification cannot acquire a waiter lock because of this consumer.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    std::thread::yield_now();
+                    #[cfg(target_arch = "wasm32")]
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+struct CallbackOwner {
+    exchange: Arc<StateExchange>,
+    enabled: Arc<AtomicBool>,
+    rejected: Option<Retirement>,
+}
+
+impl CallbackOwner {
+    fn fill(&mut self, out: &mut [f32], channels: usize) {
+        if !self.enabled.load(Ordering::Acquire) || self.exchange.shutdown.load(Ordering::Acquire) || self.rejected.is_some() {
+            out.fill(0.0);
+            return;
+        }
+        let Ok(mut state) = self.exchange.receiver.try_recv() else {
+            out.fill(0.0);
+            return;
+        };
+        state.fill(out, channels);
+        if let Err(error) = self.exchange.sender.try_send(state) {
+            // Full is excluded by the one-state/sole-returner invariant. Disconnection is
+            // excluded while this owner holds the exchange's receiver. Preserve ownership
+            // even if that invariant is violated: the live control receiver disposes it.
+            let state = error.into_inner();
+            let garbage = state.garbage.clone();
+            self.exchange.shutdown.store(true, Ordering::Release);
+            match garbage.send(Retirement::Audio(state)) {
+                Ok(()) => self.exchange.returned_to_retirement.store(true, Ordering::Release),
+                Err(error) => self.rejected = Some(error.0),
+            }
+        }
+    }
+}
+
 /// UI-thread bookkeeping of the third-party instances the audio thread holds.
 struct Side {
     /// What was last created for each slot: (plugin id, channels, created ok).
+    #[cfg(test)]
     shadow: HashMap<(TrackId, usize), (String, usize, bool)>,
     /// Session sample rate the instances were prepared for.
+    #[cfg(test)]
     rate: f32,
     /// Editor handles of the live instances.
     editors: HashMap<(TrackId, usize), Box<dyn PluginEditor>>,
-    garbage: Receiver<Vec<Box<dyn Plugin>>>,
+    garbage: Receiver<Retirement>,
 }
 
 impl Side {
     /// Drops retired instances (closing their editors first, inside the plugin's drop).
     fn collect_garbage(&mut self) {
         while let Ok(g) = self.garbage.try_recv() {
-            drop(g);
+            g.dispose();
         }
     }
 
+    #[cfg(test)]
     fn forget(&mut self, key: (TrackId, usize)) {
         self.shadow.remove(&key);
         if let Some(mut e) = self.editors.remove(&key) {
@@ -349,6 +568,10 @@ pub struct Player {
     shared: Arc<Shared>,
     tx: Sender<Cmd>,
     side: Mutex<Side>,
+    preparer: Mutex<SessionPreparer>,
+    exchange: Arc<StateExchange>,
+    #[cfg(not(target_arch = "wasm32"))]
+    clock: Option<std::thread::JoinHandle<()>>,
     #[cfg(not(target_arch = "wasm32"))]
     _stream: Option<cpal::Stream>,
     #[cfg(target_arch = "wasm32")]
@@ -359,6 +582,32 @@ pub struct Player {
     pub device_channels: u16,
     /// True when no audio device could be opened (silent clock).
     pub silent: bool,
+}
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        self.exchange.shutdown.store(true, Ordering::Release);
+        self.shared.playing.store(false, Ordering::Relaxed);
+        if let Some(stream) = self._stream.take() {
+            use cpal::traits::StreamTrait;
+            let _ = stream.pause();
+            drop(stream);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(clock) = self.clock.take() {
+            let _ = clock.join();
+        }
+        // Receiver and editors remain alive until every callback lease has returned. On
+        // WebAudio close() is asynchronous; the state slot is independent of closure lifetime.
+        let state = self.exchange.reclaim();
+        let side = self.side.get_mut().unwrap_or_else(PoisonError::into_inner);
+        for editor in side.editors.values_mut() {
+            editor.close();
+        }
+        side.editors.clear();
+        drop(state); // includes active workspace, rejected retirement, and queued commands
+        side.collect_garbage();
+    }
 }
 
 impl Player {
@@ -374,9 +623,22 @@ impl Player {
         self.side.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    pub fn try_new(session: Arc<Session>, lifetime: u64) -> Result<Self, PreparationError> {
+        let player = Self::open(Arc::clone(&session));
+        player.try_update_session(session, lifetime)?;
+        Ok(player)
+    }
+
     fn open(session: Arc<Session>) -> Player {
         let (gtx, grx) = channel();
-        let side = Mutex::new(Side { shadow: HashMap::new(), rate: session.sample_rate.as_f64() as f32, editors: HashMap::new(), garbage: grx });
+        let side = Mutex::new(Side {
+            #[cfg(test)]
+            shadow: HashMap::new(),
+            #[cfg(test)]
+            rate: session.sample_rate.as_f64() as f32,
+            editors: HashMap::new(),
+            garbage: grx,
+        });
         let shared = Arc::new(Shared {
             position: AtomicI64::new(0),
             playing: AtomicBool::new(false),
@@ -390,9 +652,11 @@ impl Player {
             Ok((device, config, name)) => {
                 let rate = config.sample_rate.0;
                 let channels = usize::from(config.channels);
-                let mut state = AudioState::new(rx, Arc::clone(&shared), session, f64::from(rate), gtx);
-                // cpal may call this on the audio thread (on ALSA in a loop while the device
-                // stays broken): marked, so the logger hands the record off instead of writing it.
+                let exchange = StateExchange::new(AudioState::new(rx, Arc::clone(&shared), session, f64::from(rate), gtx));
+                // A failed build may keep its closure alive, especially on WebAudio. It
+                // cannot acquire the state unless this particular producer was enabled.
+                let enabled = Arc::new(AtomicBool::new(false));
+                let mut callback = CallbackOwner { exchange: Arc::clone(&exchange), enabled: Arc::clone(&enabled), rejected: None };
                 let err_fn = |e: cpal::StreamError| {
                     mark_audio_thread();
                     log::warn!("audio stream error: {e}");
@@ -402,12 +666,13 @@ impl Player {
                     &config,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                         mark_audio_thread();
-                        state.fill(data, channels);
+                        callback.fill(data, channels);
                     },
                     err_fn,
                     None,
                 ) {
                     Ok(stream) => {
+                        enabled.store(true, Ordering::Release);
                         if let Err(e) = stream.play() {
                             log::warn!("audio stream failed to start: {e}");
                         }
@@ -416,6 +681,10 @@ impl Player {
                             shared,
                             tx,
                             side,
+                            preparer: Mutex::new(SessionPreparer::default()),
+                            exchange,
+                            #[cfg(not(target_arch = "wasm32"))]
+                            clock: None,
                             _stream: Some(stream),
                             device_name: name,
                             device_rate: rate,
@@ -425,70 +694,52 @@ impl Player {
                     }
                     Err(e) => {
                         log::warn!("cannot open audio stream: {e}; using a silent clock");
-                        let (tx2, rx2) = channel();
-                        let (gtx2, grx2) = channel();
-                        // The state (and its receivers) moved into the failed closure; rebuild.
-                        let mut side = side;
-                        side.get_mut().unwrap_or_else(PoisonError::into_inner).garbage = grx2;
-                        Player::silent_clock(shared, tx2, rx2, want, side, gtx2)
+                        // The disabled failed producer shares no active lease. Reuse the
+                        // original receivers and retirement lifetime rather than abandoning them.
+                        Player::silent_clock_with(shared, tx, exchange, rate, side)
                     }
                 }
             }
             Err(e) => {
                 log::warn!("no audio output: {e}; using a silent clock");
-                let s2 = Arc::clone(&shared);
-                Player::silent_clock_with(s2, tx, rx, session, side, gtx)
+                let exchange = StateExchange::new(AudioState::new(rx, Arc::clone(&shared), session, f64::from(want), gtx));
+                Player::silent_clock_with(shared, tx, exchange, want, side)
             }
         }
-    }
-
-    fn silent_clock(
-        shared: Arc<Shared>,
-        tx: Sender<Cmd>,
-        rx: Receiver<Cmd>,
-        rate: u32,
-        side: Mutex<Side>,
-        gtx: Sender<Vec<Box<dyn Plugin>>>,
-    ) -> Player {
-        let s = Arc::new(Session::new("Untitled", soundcraft_time::SampleRate::new(rate).unwrap_or_default()));
-        Player::silent_clock_with(shared, tx, rx, s, side, gtx)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn silent_clock_with(
-        shared: Arc<Shared>,
-        tx: Sender<Cmd>,
-        rx: Receiver<Cmd>,
-        session: Arc<Session>,
-        side: Mutex<Side>,
-        gtx: Sender<Vec<Box<dyn Plugin>>>,
-    ) -> Player {
-        let rate = session.sample_rate.hz();
-        let mut state = AudioState::new(rx, Arc::clone(&shared), session, f64::from(rate), gtx);
+    fn silent_clock_with(shared: Arc<Shared>, tx: Sender<Cmd>, exchange: Arc<StateExchange>, rate: u32, side: Mutex<Side>) -> Player {
+        let mut callback = CallbackOwner { exchange: Arc::clone(&exchange), enabled: Arc::new(AtomicBool::new(true)), rejected: None };
         let spawn = std::thread::Builder::new().name("soundcraft-clock".into()).spawn(move || {
             let mut buf = vec![0.0f32; 4096];
             let mut last = std::time::Instant::now();
-            loop {
+            while !callback.exchange.shutdown.load(Ordering::Acquire) {
                 std::thread::sleep(std::time::Duration::from_millis(10));
                 let now = std::time::Instant::now();
-                let frames = ((now - last).as_secs_f64() * state.device_rate) as usize;
+                let frames = ((now - last).as_secs_f64() * f64::from(rate)) as usize;
                 last = now;
-                let n = (frames * 2).min(buf.len());
+                let n = frames.saturating_mul(2).min(buf.len());
                 if let Some(b) = buf.get_mut(..n) {
-                    state.fill(b, 2);
-                }
-                if Arc::strong_count(&state.shared) <= 1 {
-                    break;
+                    callback.fill(b, 2);
                 }
             }
         });
-        if let Err(e) = spawn {
-            log::warn!("clock thread failed: {e}");
-        }
+        let clock = match spawn {
+            Ok(clock) => Some(clock),
+            Err(e) => {
+                log::warn!("clock thread failed: {e}");
+                exchange.shutdown.store(true, Ordering::Release);
+                None
+            }
+        };
         Player {
             shared,
             tx,
             side,
+            preparer: Mutex::new(SessionPreparer::default()),
+            exchange,
+            clock,
             _stream: None,
             device_name: "No audio device (silent)".into(),
             device_rate: rate,
@@ -498,21 +749,18 @@ impl Player {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn silent_clock_with(
-        shared: Arc<Shared>,
-        tx: Sender<Cmd>,
-        _rx: Receiver<Cmd>,
-        session: Arc<Session>,
-        side: Mutex<Side>,
-        _gtx: Sender<Vec<Box<dyn Plugin>>>,
-    ) -> Player {
+    fn silent_clock_with(shared: Arc<Shared>, tx: Sender<Cmd>, exchange: Arc<StateExchange>, rate: u32, side: Mutex<Side>) -> Player {
+        // No background clock exists in this fallback; reject publication immediately.
+        exchange.shutdown.store(true, Ordering::Release);
         Player {
             shared,
             tx,
             side,
+            preparer: Mutex::new(SessionPreparer::default()),
+            exchange,
             _stream: None,
             device_name: "No audio device".into(),
-            device_rate: session.sample_rate.hz(),
+            device_rate: rate,
             device_channels: 0,
             silent: true,
         }
@@ -520,9 +768,43 @@ impl Player {
 
     /// Sends a new session snapshot to the audio thread, with freshly created (state-restored,
     /// prepared) instances of any third-party plugin it newly needs. Call on the UI thread.
-    pub fn update_session(&self, s: Arc<Session>) {
-        let instances = self.side().prepare(&s);
-        let _ = self.tx.send(Cmd::Session(s, instances));
+    pub fn update_session(&self, source: Arc<Session>) {
+        let _ = self.try_update_session(source, 0);
+    }
+
+    /// Compile curves, allocate workspace, and prepare new instances on the caller thread.
+    /// `lifetime` changes on Open/New and keeps saved-state captures from recapturing live seeds.
+    pub fn try_update_session(&self, source: Arc<Session>, lifetime: u64) -> Result<(), PreparationError> {
+        if self.exchange.shutdown.load(Ordering::Acquire) {
+            return Err(PreparationError("audio worker is unavailable"));
+        }
+        let mut preparer = self.preparer.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut update = preparer.prepare(Arc::clone(&source), lifetime, BLOCK)?;
+        let mut side = self.side();
+        side.editors.retain(|(track, slot), editor| {
+            let retained = update.retains_instance(*track, *slot);
+            if !retained {
+                editor.close();
+            }
+            retained
+        });
+        side.collect_garbage();
+        for (track, slot, editor) in update.editors() {
+            if let Some(mut old) = side.editors.insert((track, slot), editor) {
+                old.close();
+            }
+        }
+        let pending = vec![vec![0.0; BLOCK]; main_channels(&source)];
+        let command = Cmd::prepared(update, pending, fold_gains(&source));
+        if self.tx.send(command).is_err() {
+            preparer.invalidate();
+            for editor in side.editors.values_mut() {
+                editor.close();
+            }
+            side.editors.clear();
+            return Err(PreparationError("audio worker is unavailable"));
+        }
+        Ok(())
     }
 
     /// Reads the state of every live third-party plugin (for saving the session). Waits briefly
@@ -657,6 +939,7 @@ fn copy_meter_snapshot(source: &MeterSnapshot, out: &mut MeterSnapshot) {
 
 impl Side {
     /// Creates the third-party instances `s` needs that the audio thread does not have yet.
+    #[cfg(test)]
     fn prepare(&mut self, s: &Session) -> Vec<PreparedInstance> {
         self.collect_garbage();
         let sr = s.sample_rate.as_f64() as f32;
@@ -818,7 +1101,10 @@ mod tests {
             meters: Mutex::new(MeterSnapshot::default()),
         });
         let (tx, rx) = channel();
-        let mut st = AudioState::new(rx, Arc::clone(&shared), Arc::clone(&s), 48_000.0, channel().0);
+        let (garbage, _retired) = channel();
+        let mut st = AudioState::new(rx, Arc::clone(&shared), Arc::clone(&s), 48_000.0, garbage);
+        let update = SessionPreparer::default().prepare(Arc::clone(&s), 0, BLOCK).unwrap();
+        tx.send(Cmd::prepared(update, vec![vec![0.0; BLOCK]; main_channels(&s)], fold_gains(&s))).unwrap();
         tx.send(Cmd::Play { from: 0, end: None, looped: None }).unwrap();
         // An 8-channel device: channels in order, the rest silent.
         let mut out = vec![0.0f32; 8 * 256];
@@ -962,7 +1248,11 @@ mod tests {
             meters: Mutex::new(MeterSnapshot::default()),
         });
         let (tx, rx) = channel();
-        let mut st = AudioState::new(rx, Arc::clone(&shared), Arc::new(s), 48_000.0, channel().0);
+        let s = Arc::new(s);
+        let (garbage, _retired) = channel();
+        let mut st = AudioState::new(rx, Arc::clone(&shared), Arc::clone(&s), 48_000.0, garbage);
+        let update = SessionPreparer::default().prepare(Arc::clone(&s), 0, BLOCK).unwrap();
+        tx.send(Cmd::prepared(update, vec![vec![0.0; BLOCK]; main_channels(&s)], fold_gains(&s))).unwrap();
         let ring = record::InputRing::new(1, 48_000);
         tx.send(Cmd::Input(Arc::clone(&ring))).unwrap();
         tx.send(Cmd::Play { from: 0, end: Some(1000), looped: None }).unwrap();

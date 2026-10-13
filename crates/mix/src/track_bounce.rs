@@ -290,17 +290,37 @@ pub fn render(s: &Session, p: &Plan) -> std::result::Result<Vec<Vec<f32>>, Strin
     let ch = strip_channels(t, 2);
     let mut strip = Strip::new();
     strip.skip_volume = !p.options.volume;
+    let mut aggregate = 0;
+    strip.automation = automation::TrackAutomation::compile(t, &mut aggregate).map_err(str::to_string)?;
+    strip.vca = t
+        .mixer
+        .vca
+        .and_then(|id| s.tracks.iter().find(|vca| vca.id.0 == id && vca.kind == TrackKind::Vca))
+        .map(|vca| automation::TrackAutomation::compile(vca, &mut aggregate).map(|auto| (vca.mixer.volume_db, auto)))
+        .transpose()
+        .map_err(str::to_string)?;
+    strip.rtp = midi_properties(s, t);
     strip.buf = planar(ch, BLOCK)?;
     strip.scratch = vec![0.0; BLOCK];
-    for ins in &t.mixer.inserts {
+    for (index, ins) in t.mixer.inserts.iter().enumerate() {
         strip.plugins.push(match ins.as_ref().filter(|i| i.active && !i.bypass) {
-            Some(ins) => Some(slot(ins, s.sample_rate.as_f64() as f32, ch)?),
+            Some(ins) => Some(slot(ins, &strip.automation, index, s.sample_rate.as_f64() as f32, ch)?),
             None => None,
         });
     }
     if let Some(ins) = t.instrument.as_ref().filter(|_| t.kind == TrackKind::Instrument) {
-        strip.instrument = Some(slot(ins, s.sample_rate.as_f64() as f32, ch)?);
+        strip.instrument = Some(slot(ins, &strip.automation, INSTRUMENT_SLOT, s.sample_rate.as_f64() as f32, ch)?);
         sync_sample(&mut strip, Some(ins), s);
+    }
+    strip.pre = planar(ch, BLOCK)?;
+    strip.clipbuf = planar(ch, BLOCK)?;
+    strip.held = Vec::with_capacity(128);
+    for clip in t.clips() {
+        if let Some(params) = clip_fx_params(s, clip.id.0) {
+            let mut fx = ClipFx::new(s.sample_rate.as_f64() as f32, ch);
+            fx.configure(&params);
+            strip.clip_fx.insert(clip.id.0, fx);
+        }
     }
     let mut out = planar(p.format.channels(), p.frames)?;
     let empty_busses = HashMap::new();
@@ -326,6 +346,9 @@ pub fn render(s: &Session, p: &Plan) -> std::result::Result<Vec<Vec<f32>>, Strin
             release_clip_boundary(s, t, &mut strip, pos);
         }
         process_strip(s, t, &mut strip, &empty_busses, &live, pos, n, false);
+        if let Some(error) = strip.error {
+            return Err(error.to_string());
+        }
         if strip.latency != 0 {
             return Err("insert latency is unsupported by source-only Track Bounce".into());
         }
@@ -333,9 +356,15 @@ pub fn render(s: &Session, p: &Plan) -> std::result::Result<Vec<Vec<f32>>, Strin
             for c in &mut routed {
                 c.fill(0.0);
             }
-            let pan = PanSpec { stereo: [pan_at(t, 0, pos), pan_at(t, 1, pos)], surround: t.mixer.surround.as_ref() };
-            let matrix = build_matrix(strip_format(t, ch), ch, p.format, routed.len(), &pan, PanLaw::Minus3);
-            apply_matrix(&strip.buf, n, &mut routed, &matrix, 1.0);
+            for frame in 0..n {
+                let at = automation::position(pos, frame);
+                let stereo = std::array::from_fn(|index| {
+                    strip.automation.pan(index, t.mixer.pan.get(index).copied().unwrap_or(if index == 0 { 0.0 } else { 1.0 }), at)
+                });
+                let pan = PanSpec { stereo, surround: t.mixer.surround.as_ref() };
+                let matrix = build_matrix(strip_format(t, ch), ch, p.format, routed.len(), &pan, PanLaw::Minus3);
+                apply_matrix_frame(&strip.buf, frame, &mut routed, &matrix, 1.0);
+            }
         }
         let source = if p.options.pan { &routed } else { &strip.buf };
         let block_end = pos.checked_add(n as i64).ok_or_else(|| "render position overflow".to_string())?;
@@ -387,9 +416,15 @@ fn release_clip_boundary(s: &Session, t: &Track, strip: &mut Strip, pos: Samples
     }
 }
 
-fn slot(ins: &soundcraft_model::Insert, sr: f32, ch: usize) -> std::result::Result<PluginSlot, String> {
+fn slot(
+    ins: &soundcraft_model::Insert,
+    auto: &automation::TrackAutomation,
+    index: usize,
+    sr: f32,
+    ch: usize,
+) -> std::result::Result<PluginSlot, String> {
     // Built-in factory only. No hosted fallback and no opaque licensed state load.
     let mut plugin = soundcraft_dsp::create(&ins.plugin).ok_or_else(|| "built-in plugin unavailable".to_string())?;
     plugin.prepare(sr, BLOCK, ch);
-    Ok(PluginSlot { id: ins.plugin.clone(), ch, plugin, applied: Vec::new() })
+    PluginSlot::prepared(plugin, ins, auto, index, ch, BLOCK).map_err(|error| error.to_string())
 }

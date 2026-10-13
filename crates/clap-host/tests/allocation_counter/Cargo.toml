@@ -1,0 +1,9 @@
+# Isolated test-only allocator instrumentation; no production or external dependency.
+[package]
+name = "test-allocation-counter"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+license = "MIT OR Apache-2.0"
+[workspace]
