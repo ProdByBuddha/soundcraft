@@ -1,6 +1,6 @@
 # Imported originals and playback audio
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor (ED-31 original preservation)
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (private temporary original storage)
 
 Native Unix audio imports record encoded original bytes separately from the decoded audio used for
 playback. Original provenance includes SHA-256, byte count, original sample rate, frame and
@@ -74,6 +74,11 @@ I/O. A missing playback derivative does not release its original's lease. Publis
 originals are excluded from temporary collection. Concurrent hostile
 filesystem replacement and arbitrary codec allocation behavior remain separate limits.
 
+On Unix, temporary original-store directories and staging files are created with owner-only
+permissions before any audio is written. Staged files become read-only after copying. This
+protects temporary snapshots under a normal shared-system umask; it does not change the
+permissions of external recordings or published session media.
+
 Temporary snapshot cleanup currently proves ownership with Unix device/inode identity. On
 non-Unix platforms it refuses cleanup rather than deleting a file it cannot prove it owns.
 Windows Reference imports and subsequent staging after expired snapshots are therefore not
@@ -92,4 +97,5 @@ support for that provenance is an explicit remaining gap.
 
 | Date | Change | Notes |
 |---|---|---|
+| 2026-10-13 | minor | Create Unix temporary original directories and staged files with owner-only permissions before writing audio |
 | 2026-10-12 | minor | ED-31 ownership, original provenance, atomic import and separate original/playback preservation contract on native Unix; non-Unix ownership, browser and broader session portability remain open |
