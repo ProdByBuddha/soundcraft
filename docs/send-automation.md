@@ -2,11 +2,13 @@
 
 > **Last reviewed:** 2026-10-12 · **Last updated:** 2026-10-12 · **Change:** minor · **Workflow:** SC-MX11, partial
 
+**Historical send-only checkpoint:** the policy, test scope and residual table below describe the earlier mono-send implementation. The current [shared prepared automation](automation-playback.md) adds per-sample Volume/Pan/Mute/SendLevel/Plugin consumers, extends ordinary Bus mute/level matrices and introduces a shared static/automated stereo-send balance law. It also replaces per-callback lane scans with prepared curves, sorts imported time points and rejects nonfinite preparation. Its focused references and integration requirements are recorded there; neither arc closes the original SC-MX11 acceptance.
+
 A nonempty SendPan lane now controls each sample of a mono send into an ordinary stereo Bus. A nonempty SendMute lane gates samples at the exact stored breakpoint on ordinary Bus routes, for supported widths up to 16 channels. The shared mix engine supplies playback and offline rendering; this change has synthetic rendering evidence, with no physical audio-device or browser observation.
 
 The original MX-11 acceptance remains: **For every exposed AutoParam, render an automated change and compare the output against a static reference; include send pan and send mute plus seek/loop boundaries.** This feature covers two bounded consumers and does not close that acceptance.
 
-## Value and routing policy
+## Initial value and routing policy (historical)
 
 - In a mode for which `AutomationMode::reads()` is true, a valid nonempty lane overrides the send's static pan/mute. A zero SendMute value can unmute a statically muted send. Track mute, solo suppression and VCA mute still suppress the strip, including pre-fader sends.
 - Off, absent and empty lanes use the static control. Read, Touch, Latch, TouchLatch, Write and Trim retain the existing reader-mode policy. Recording those gestures is a separate workflow.
@@ -29,7 +31,7 @@ These are independent SoundCraft references; no proprietary PCM, code, binary, a
 
 Whole mono arrangement Repeat with Automation Follows Edit retains the captured SendPan/SendMute curve and audible stereo bus output. The combined regression preserves outside clips/PCM, static send/bus/Aux routing and selection, adds one Undo, and reopens native/bundled strict Copy with the same copied curves and PCM across different chunk sizes. Exports preserve the original document Arc, revision, dirty state, history, macro journal, clipboard and path. This synthetic interaction does not expand the bounded route/layout or platform scope.
 
-## Full acceptance residuals
+## Initial acceptance residuals (historical)
 
 | AutoParam family | Remaining requirement |
 |---|---|
@@ -41,7 +43,7 @@ Whole mono arrangement Repeat with Automation Follows Edit retains the captured 
 | SendMute(0..9) | Non-Bus/Ambisonic routes, global/type suspension, safing and actual UI/control capture |
 | Plugin {slot,param} | Missing/unknown keys/slots, mid-block timing, instruments, trim sentinel, hosted parameter/state/thread behavior and complete built-in references |
 
-All legitimate indices and route contexts still need the complete original static-reference matrix. Automation writing/prime/preview/safing, global enable/suspend migration, malformed-lane import diagnostics and capability validation remain open. Device latency, realtime callback budgets, hosted plugins, browser playback and Windows/Linux/FreeBSD acceptance are separate; installed-plugin or hardware inventory is outside this feature’s acceptance.
+The table records the requirements left by that initial checkpoint. Current shared-consumer coverage and the retained EX01–EX10 exposure residuals are tracked in [automation playback](automation-playback.md). All exposed route/control contexts still need the complete original acceptance. Automation writing/prime/preview/safing, global enable/suspend migration, malformed-lane import diagnostics and capability validation remain open. Device latency, realtime callback budgets, hosted plugins, browser playback and Windows/Linux/FreeBSD acceptance are separate; installed-plugin or hardware inventory is outside this feature’s acceptance.
 
 Fresh exact upstream overlap review retained PR295 (main-pan grid in the same route function), PR308 (writer/history), PR362 (static send UI), PR214 (static mute shortcuts), PR290 (editing), PR354 (thinning) and PR326 (offline render bounds). PR295/308 were rechecked immediately before implementation; no upstream code was imported. Future changes must reconcile those scopes explicitly.
 
@@ -53,5 +55,6 @@ Behavior was paraphrased from the existing 2026.4 Reference Guide corpus: physic
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Marked initial mono-send policy/timing as historical and linked prepared shared-consumer follow-up; full acceptance remains partial |
 | 2026-10-12 | minor | Added combined Repeat/strict Copy audible-curve regression and retained timing/runtime limits |
 | 2026-10-12 | minor | Added bounded send pan/mute consumers with explicit precedence, malformed-lane and suspension policy; full MX11 acceptance remains open |

@@ -1,7 +1,9 @@
 //! `Vst3Plugin`: a loaded VST3 instance behind the safe `soundcraft_dsp::Plugin` trait.
 
-use crate::ffi::{BusBuffers, EVENT_CAP, EditorLink, HostContext, Instance, NoteEvent, PARAM_QUEUE_CAP};
-use soundcraft_dsp::{Plugin, PluginEditor, PluginInfo, Unit};
+use crate::ffi::{BusBuffers, EVENT_CAP, EditorLink, HostContext, Instance, NoteEvent};
+use soundcraft_dsp::{
+    AutomationPrepareError, MAX_AUTOMATION_NOTES, MAX_AUTOMATION_PARAMS, ParamTarget, Plugin, PluginEditor, PluginInfo, ProcessDelivery, Unit,
+};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use vst3::ComWrapper;
@@ -31,9 +33,12 @@ pub struct Vst3Plugin {
     ids: Vec<u32>,
     maps: Vec<Mapping>,
     values: Vec<f32>,
+    parameter_capacity: usize,
+    note_capacity: usize,
+    overflowed: bool,
     /// Normalized values waiting for the next block (coalesced per id; bounded).
     pending: Vec<(u32, f64)>,
-    /// Pending notes, kept sorted by time. Never grows past `EVENT_CAP`.
+    /// Pending notes, kept sorted by time. Never grows past its off-thread prepared logical bound.
     notes: Vec<NoteEvent>,
     inputs: BusBuffers,
     outputs: BusBuffers,
@@ -43,6 +48,8 @@ pub struct Vst3Plugin {
     held: [bool; 128],
     channels: usize,
     max_block: usize,
+    /// Factory/caller configuration alone is not a successful processing lifetime.
+    has_processed: bool,
     latency: usize,
     tail: usize,
     position: i64,
@@ -75,7 +82,10 @@ impl Vst3Plugin {
         let mut p = Vst3Plugin {
             info,
             values: Vec::with_capacity(ids.len()),
-            pending: Vec::with_capacity(ids.len().min(PARAM_QUEUE_CAP)),
+            parameter_capacity: ids.len(),
+            note_capacity: EVENT_CAP,
+            overflowed: false,
+            pending: Vec::with_capacity(ids.len()),
             notes: Vec::with_capacity(EVENT_CAP),
             inputs: BusBuffers::new(&[], 0),
             outputs: BusBuffers::new(&[], 0),
@@ -85,6 +95,7 @@ impl Vst3Plugin {
             held: [false; 128],
             channels: 2,
             max_block: 0,
+            has_processed: false,
             latency: 0,
             tail: 0,
             position: 0,
@@ -121,7 +132,7 @@ impl Vst3Plugin {
         let n = match self.maps.get(i)? {
             Mapping::Stepped(steps) if *steps > 0.0 => f64::from(v) / steps,
             Mapping::Stepped(_) => 0.0,
-            Mapping::Plain => self.inst.to_normalized(id, f64::from(v)).unwrap_or(linear),
+            Mapping::Plain => self.inst.to_normalized(id, f64::from(v))?,
             Mapping::Linear => linear,
         };
         n.is_finite().then(|| n.clamp(0.0, 1.0))
@@ -147,86 +158,54 @@ impl Vst3Plugin {
         self.pending.clear();
     }
 
-    /// Inserts keeping the queue time-sorted; drops the event when the queue is full (never
-    /// allocates on the audio thread).
-    fn push_note(&mut self, e: NoteEvent) {
-        if self.notes.len() >= self.notes.capacity() {
-            return;
+    /// Inserts only into prepared storage; overflow makes the next delivery fail.
+    fn push_note(&mut self, e: NoteEvent) -> bool {
+        if self.notes.len() >= self.note_capacity {
+            self.overflowed = true;
+            return false;
         }
         let pos = self.notes.iter().rposition(|q| q.time() <= e.time()).map_or(0, |i| i + 1);
         self.notes.insert(pos, e);
-    }
-}
-
-impl Plugin for Vst3Plugin {
-    fn info(&self) -> &'static PluginInfo {
-        self.info
-    }
-
-    fn prepare(&mut self, sample_rate: f32, max_block: usize, channels: usize) {
-        let sr = if sample_rate.is_finite() && sample_rate > 0.0 { f64::from(sample_rate) } else { 48_000.0 };
-        let mb = max_block.clamp(1, MAX_BLOCK);
-        self.channels = channels.clamp(1, MAX_CHANNELS);
-        self.max_block = 0;
-        match self.inst.configure(sr, mb, self.channels == 1) {
-            Ok(layout) => {
-                self.inputs = BusBuffers::new(&layout.inputs, mb);
-                self.outputs = BusBuffers::new(&layout.outputs, mb);
-                self.has_input = layout.inputs.first().is_some_and(|&c| c > 0);
-                self.has_output = layout.outputs.first().is_some_and(|&c| c > 0);
-                self.event_input = layout.event_input;
-                self.max_block = mb;
-                self.latency = self.inst.latency() as usize;
-                self.tail = self.inst.tail() as usize;
-            }
-            Err(e) => {
-                log::warn!("{}: {e}", self.info.id);
-                self.latency = 0;
-            }
-        }
-        // Re-send every value so a re-activated plugin matches the session.
-        self.pending.clear();
-        for i in 0..self.ids.len().min(PARAM_QUEUE_CAP) {
-            if let (Some(&id), Some(n)) = (self.ids.get(i), self.values.get(i).and_then(|&v| self.normalized_from_plain(i, v))) {
-                self.pending.push((id, n));
-            }
-        }
-    }
-
-    fn reset(&mut self) {
-        self.notes.clear();
-        self.held = [false; 128];
-    }
-
-    fn set_param(&mut self, id: &str, value: f32) -> bool {
-        let Some(i) = self.info.params.iter().position(|p| p.id == id) else { return false };
-        let (Some(pi), Some(&vid)) = (self.info.params.get(i), self.ids.get(i)) else { return false };
-        let v = pi.clamp(value);
-        if let Some(slot) = self.values.get_mut(i) {
-            *slot = v;
-        }
-        let Some(n) = self.normalized_from_plain(i, v) else { return true };
-        if let Some(e) = self.pending.iter_mut().find(|(pid, _)| *pid == vid) {
-            e.1 = n;
-        } else if self.pending.len() < self.pending.capacity() {
-            self.pending.push((vid, n));
-        }
         true
     }
 
-    fn param(&self, id: &str) -> Option<f32> {
-        let i = self.info.params.iter().position(|p| p.id == id)?;
-        self.values.get(i).copied()
+    fn discard_pending(&mut self) {
+        self.pending.clear();
+        self.notes.clear();
+        self.overflowed = false;
     }
 
-    fn process(&mut self, io: &mut [Vec<f32>], frames: usize) {
+    /// Deliberate state restoration/reconfiguration, never capacity preparation. Explicit
+    /// pending control writes take precedence over the cached static catalog.
+    fn queue_current_values(&mut self) -> Result<(), AutomationPrepareError> {
+        if self.ids.len() > self.parameter_capacity || self.ids.len() > MAX_AUTOMATION_PARAMS {
+            return Err(AutomationPrepareError::CapacityExceeded);
+        }
+        for i in 0..self.ids.len() {
+            let id = self.ids[i];
+            if self.pending.iter().any(|&(pending, _)| pending == id) {
+                continue;
+            }
+            let Some(normalized) = self.normalized_from_plain(i, self.values[i]) else { return Err(AutomationPrepareError::InvalidParameter) };
+            if self.pending.len() >= self.parameter_capacity {
+                self.overflowed = true;
+                return Err(AutomationPrepareError::CapacityExceeded);
+            }
+            self.pending.push((id, normalized));
+        }
+        Ok(())
+    }
+}
+
+impl Vst3Plugin {
+    fn process_audio(&mut self, io: &mut [Vec<f32>], frames: usize) -> ProcessDelivery {
         if !self.inst.is_active() || self.max_block == 0 {
-            return;
+            return ProcessDelivery::ProcessorFailed;
         }
         let ch = self.channels.min(io.len());
         let frames = io.iter().take(ch).map(Vec::len).fold(frames, usize::min);
         if frames == 0 || ch == 0 {
-            return;
+            return ProcessDelivery::ProcessorFailed;
         }
         if self.inst.host().latency_changed.swap(false, Ordering::Relaxed) {
             self.latency = self.inst.latency() as usize;
@@ -273,11 +252,134 @@ impl Plugin for Vst3Plugin {
                         }
                     }
                 }
-                Err(e) => log::debug!("{}: {e}", self.info.id),
+                Err(e) => return e,
                 _ => {}
             }
             start += n;
         }
+        self.has_processed = true;
+        ProcessDelivery::Delivered
+    }
+}
+
+impl Plugin for Vst3Plugin {
+    fn info(&self) -> &'static PluginInfo {
+        self.info
+    }
+
+    fn prepare(&mut self, sample_rate: f32, max_block: usize, channels: usize) {
+        let reprepare = self.has_processed;
+        let sr = if sample_rate.is_finite() && sample_rate > 0.0 { f64::from(sample_rate) } else { 48_000.0 };
+        let mb = max_block.clamp(1, MAX_BLOCK);
+        self.channels = channels.clamp(1, MAX_CHANNELS);
+        self.max_block = 0;
+        match self.inst.configure(sr, mb, self.channels == 1) {
+            Ok(layout) => {
+                self.inputs = BusBuffers::new(&layout.inputs, mb);
+                self.outputs = BusBuffers::new(&layout.outputs, mb);
+                self.has_input = layout.inputs.first().is_some_and(|&c| c > 0);
+                self.has_output = layout.outputs.first().is_some_and(|&c| c > 0);
+                self.event_input = layout.event_input;
+                self.max_block = mb;
+                self.latency = self.inst.latency() as usize;
+                self.tail = self.inst.tail() as usize;
+            }
+            Err(e) => {
+                log::warn!("{}: {e}", self.info.id);
+                self.latency = 0;
+            }
+        }
+        if self.prepare_automation(self.info.params.len(), EVENT_CAP).is_err() || (reprepare && self.queue_current_values().is_err()) {
+            self.max_block = 0;
+        }
+    }
+
+    fn reset(&mut self) {
+        self.notes.clear();
+        self.overflowed = false;
+        self.held = [false; 128];
+    }
+
+    fn set_param(&mut self, id: &str, value: f32) -> bool {
+        let Some(i) = self.info.params.iter().position(|p| p.id == id) else { return false };
+        let (Some(pi), Some(&vid)) = (self.info.params.get(i), self.ids.get(i)) else { return false };
+        let v = pi.clamp(value);
+        let Some(n) = self.normalized_from_plain(i, v) else { return false };
+        if let Some(e) = self.pending.iter_mut().find(|(pid, _)| *pid == vid) {
+            e.1 = n;
+        } else {
+            if self.pending.len() >= self.parameter_capacity {
+                self.overflowed = true;
+                return false;
+            }
+            self.pending.push((vid, n));
+        }
+        if let Some(slot) = self.values.get_mut(i) {
+            *slot = v;
+        }
+        true
+    }
+
+    fn param(&self, id: &str) -> Option<f32> {
+        let i = self.info.params.iter().position(|p| p.id == id)?;
+        self.values.get(i).copied()
+    }
+
+    fn process(&mut self, io: &mut [Vec<f32>], frames: usize) {
+        let result = if self.overflowed { ProcessDelivery::CapacityExceeded } else { self.process_audio(io, frames) };
+        if result != ProcessDelivery::Delivered {
+            self.discard_pending();
+            for channel in io.iter_mut().take(self.channels) {
+                channel.iter_mut().take(frames).for_each(|sample| *sample = 0.0);
+            }
+        }
+    }
+
+    fn prepare_automation(&mut self, parameter_capacity: usize, note_capacity: usize) -> Result<(), AutomationPrepareError> {
+        if parameter_capacity < self.info.params.len() || parameter_capacity > MAX_AUTOMATION_PARAMS || note_capacity > MAX_AUTOMATION_NOTES {
+            return Err(AutomationPrepareError::CapacityExceeded);
+        }
+        self.notes.clear();
+        self.overflowed = false;
+        self.pending
+            .try_reserve_exact(parameter_capacity.saturating_sub(self.pending.len()))
+            .map_err(|_| AutomationPrepareError::AllocationFailed)?;
+        self.notes.try_reserve_exact(note_capacity).map_err(|_| AutomationPrepareError::AllocationFailed)?;
+        self.inst.prepare_event_capacity(parameter_capacity, note_capacity)?;
+        self.parameter_capacity = parameter_capacity;
+        self.note_capacity = note_capacity;
+        Ok(())
+    }
+
+    fn process_with_targets(&mut self, io: &mut [Vec<f32>], frames: usize, targets: &[ParamTarget<'_>]) -> ProcessDelivery {
+        if frames == 0 || io.len() < self.channels || io.iter().take(self.channels).any(|channel| channel.len() < frames) {
+            self.discard_pending();
+            return ProcessDelivery::ProcessorFailed;
+        }
+        let failure = if self.overflowed || targets.len() > self.parameter_capacity {
+            Some(ProcessDelivery::CapacityExceeded)
+        } else if targets.iter().any(|t| !t.value.is_finite() || !self.info.params.iter().any(|p| p.id == t.id))
+            || self.notes.iter().any(|e| e.time() as usize >= frames)
+        {
+            Some(ProcessDelivery::InvalidTarget)
+        } else {
+            None
+        };
+        if let Some(failure) = failure {
+            self.discard_pending();
+            return failure;
+        }
+        for target in targets {
+            if !self.set_param(target.id, target.value) {
+                self.discard_pending();
+                return ProcessDelivery::InvalidTarget;
+            }
+        }
+        let result = self.process_audio(io, frames);
+        if result != ProcessDelivery::Delivered {
+            self.discard_pending();
+        }
+        result
     }
 
     fn latency(&self) -> usize {
@@ -293,7 +395,9 @@ impl Plugin for Vst3Plugin {
             return;
         }
         let time = u32::try_from(offset).unwrap_or(u32::MAX);
-        self.push_note(NoteEvent::On { time, key: note, velocity: f32::from(velocity.min(127)) / 127.0 });
+        if !self.push_note(NoteEvent::On { time, key: note, velocity: f32::from(velocity.min(127)) / 127.0 }) {
+            return;
+        }
         if let Some(h) = self.held.get_mut(note as usize) {
             *h = true;
         }
@@ -304,7 +408,9 @@ impl Plugin for Vst3Plugin {
             return;
         }
         let time = u32::try_from(offset).unwrap_or(u32::MAX);
-        self.push_note(NoteEvent::Off { time, key: note });
+        if !self.push_note(NoteEvent::Off { time, key: note }) {
+            return;
+        }
         if let Some(h) = self.held.get_mut(note as usize) {
             *h = false;
         }
@@ -323,11 +429,15 @@ impl Plugin for Vst3Plugin {
     }
 
     fn load_state(&mut self, data: &[u8]) -> bool {
-        let ok = self.inst.load_state(data);
-        if ok {
-            self.refresh_values();
+        if !self.inst.load_state(data) {
+            return false;
         }
-        ok
+        self.refresh_values();
+        if self.queue_current_values().is_err() {
+            self.max_block = 0;
+            return false;
+        }
+        true
     }
 
     fn open_editor(&mut self) -> Result<(), String> {

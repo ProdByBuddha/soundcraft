@@ -13,6 +13,10 @@ serde.workspace = true
 thiserror.workspace = true
 log.workspace = true
 
+# Safe test API; allocator forwarding lives only in the isolated test helper.
+[dev-dependencies]
+test-allocation-counter = { path = "tests/allocation_counter" }
+
 [[test]]
 name = "editor_main_thread"
 harness = false

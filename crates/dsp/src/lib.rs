@@ -169,6 +169,38 @@ impl PluginInfo {
     }
 }
 
+/// Maximum prepared parameter and note budgets for one automation span.
+pub const MAX_AUTOMATION_PARAMS: usize = 4096;
+pub const MAX_AUTOMATION_NOTES: usize = 1024;
+
+/// A plain-unit target, borrowed from an immutable prepared binding.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParamTarget<'a> {
+    pub id: &'a str,
+    pub value: f32,
+}
+
+/// Fixed preparation failures. Preparation runs outside the audio callback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutomationPrepareError {
+    InvalidParameter,
+    CapacityExceeded,
+    AllocationFailed,
+}
+
+/// Receipt for the complete target batch and its audio span.
+///
+/// Callers commit their delivered-value cache only for `Delivered`. On failure they silence
+/// the span and retry the latest absolute targets, not stale queued records. A processor may
+/// have changed internal state before failing; this is not a rollback guarantee.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessDelivery {
+    Delivered,
+    InvalidTarget,
+    CapacityExceeded,
+    ProcessorFailed,
+}
+
 /// A realtime audio processor or instrument.
 ///
 /// Contract: `process` never allocates or panics. It processes `min(frames, io[c].len())` frames
@@ -178,11 +210,38 @@ pub trait Plugin: Send {
     fn info(&self) -> &'static PluginInfo;
     fn prepare(&mut self, sample_rate: f32, max_block: usize, channels: usize);
     fn reset(&mut self);
-    /// Sets a parameter (clamped into range; NaN becomes the default). `false` if `id` is unknown.
+    /// Sets a parameter (clamped into range; NaN becomes the default). `false` if `id` is
+    /// unknown or a hosted setter/mapping/queue refuses the value. Queuing is not delivery.
     fn set_param(&mut self, id: &str, value: f32) -> bool;
     fn param(&self, id: &str) -> Option<f32>;
     /// In-place processing of `channels` planar buffers each `frames` long.
     fn process(&mut self, io: &mut [Vec<f32>], frames: usize);
+    /// Reserves every host queue layer off-thread for the full parameter catalog and span-local
+    /// note budget. Existing synchronous built-ins require no additional storage.
+    fn prepare_automation(&mut self, parameter_capacity: usize, note_capacity: usize) -> Result<(), AutomationPrepareError> {
+        if parameter_capacity > MAX_AUTOMATION_PARAMS || note_capacity > MAX_AUTOMATION_NOTES {
+            return Err(AutomationPrepareError::CapacityExceeded);
+        }
+        Ok(())
+    }
+    /// Applies a prepared batch before processing. IDs are validated during preparation;
+    /// synchronous setters retain their own final validation. Hosted processors override this
+    /// method so enqueue acceptance cannot be mistaken for successful processor delivery.
+    fn process_with_targets(&mut self, io: &mut [Vec<f32>], frames: usize, targets: &[ParamTarget<'_>]) -> ProcessDelivery {
+        if targets.len() > MAX_AUTOMATION_PARAMS {
+            return ProcessDelivery::CapacityExceeded;
+        }
+        if targets.iter().any(|t| !t.value.is_finite()) {
+            return ProcessDelivery::InvalidTarget;
+        }
+        for target in targets {
+            if !self.set_param(target.id, target.value) {
+                return ProcessDelivery::InvalidTarget;
+            }
+        }
+        self.process(io, frames);
+        ProcessDelivery::Delivered
+    }
     /// Processing latency in samples (for delay compensation).
     fn latency(&self) -> usize {
         0
@@ -357,5 +416,94 @@ mod trait_default_tests {
         let s = SampleBuffer { sample_rate: 44_100.0, channels: vec![vec![0.0; 10], vec![0.0; 7]] };
         assert_eq!(s.frames(), 7);
         assert_eq!(SampleBuffer::default().frames(), 0);
+    }
+}
+
+#[cfg(test)]
+mod automation_delivery_tests {
+    use super::*;
+    struct ExactCase {
+        gain: f32,
+        bias: f32,
+        calls: usize,
+        refuse_bias: bool,
+    }
+    impl Plugin for ExactCase {
+        fn info(&self) -> &'static PluginInfo {
+            panic!("prepared default delivery must not rediscover metadata")
+        }
+        fn prepare(&mut self, _: f32, _: usize, _: usize) {}
+        fn reset(&mut self) {}
+        fn set_param(&mut self, id: &str, value: f32) -> bool {
+            match id {
+                "GainA" => self.gain = value,
+                "BiasB" if !self.refuse_bias => self.bias = value,
+                _ => return false,
+            }
+            true
+        }
+        fn param(&self, id: &str) -> Option<f32> {
+            match id {
+                "GainA" => Some(self.gain),
+                "BiasB" => Some(self.bias),
+                _ => None,
+            }
+        }
+        fn process(&mut self, io: &mut [Vec<f32>], frames: usize) {
+            self.calls += 1;
+            for channel in io {
+                for sample in channel.iter_mut().take(frames) {
+                    *sample = *sample * self.gain + self.bias;
+                }
+            }
+        }
+    }
+    fn mock() -> ExactCase {
+        ExactCase { gain: 1.0, bias: 0.0, calls: 0, refuse_bias: false }
+    }
+    #[test]
+    fn prepared_default_delivers_simultaneous_exact_case_targets_without_metadata_lookup() {
+        let mut p = mock();
+        p.prepare_automation(2, 0).unwrap();
+        let mut io = vec![vec![0.25, -0.5]];
+        let targets = [ParamTarget { id: "GainA", value: 2.0 }, ParamTarget { id: "BiasB", value: 0.125 }];
+        assert_eq!(p.process_with_targets(&mut io, 2, &targets), ProcessDelivery::Delivered);
+        assert_eq!(io, vec![vec![0.625, -0.875]]);
+        assert_eq!(p.calls, 1);
+        assert_eq!(p.process_with_targets(&mut io, 2, &[ParamTarget { id: "gaina", value: 1.0 }]), ProcessDelivery::InvalidTarget);
+        assert_eq!(p.calls, 1);
+    }
+    #[test]
+    fn default_failure_never_processes_or_reports_delivery_and_retries_latest_values() {
+        let mut p = mock();
+        p.refuse_bias = true;
+        let mut io = vec![vec![0.25]];
+        let targets = [ParamTarget { id: "GainA", value: 1.5 }, ParamTarget { id: "BiasB", value: 0.5 }];
+        assert_eq!(p.process_with_targets(&mut io, 1, &targets), ProcessDelivery::InvalidTarget);
+        assert_eq!(p.calls, 0);
+        assert_eq!(io[0][0], 0.25);
+        // Setter-side partial mutation is permitted, but it is never a Delivered receipt.
+        assert_eq!(p.gain, 1.5);
+        p.refuse_bias = false;
+        let latest = [ParamTarget { id: "GainA", value: 0.5 }, ParamTarget { id: "BiasB", value: 0.125 }];
+        assert_eq!(p.process_with_targets(&mut io, 1, &latest), ProcessDelivery::Delivered);
+        assert_eq!(io[0][0], 0.25);
+        assert_eq!(p.calls, 1);
+    }
+    #[test]
+    fn default_prevalidation_rejects_nonfinite_and_over_capacity_before_any_setter() {
+        let mut p = mock();
+        let mut io = vec![vec![0.25]];
+        let targets = [ParamTarget { id: "GainA", value: 1.5 }, ParamTarget { id: "BiasB", value: f32::NAN }];
+        assert_eq!(p.process_with_targets(&mut io, 1, &targets), ProcessDelivery::InvalidTarget);
+        assert_eq!(p.gain, 1.0);
+        assert_eq!(p.calls, 0);
+        assert_eq!(p.prepare_automation(4096, 1024), Ok(()));
+        assert_eq!(p.prepare_automation(4097, 0), Err(AutomationPrepareError::CapacityExceeded));
+        assert_eq!(p.prepare_automation(0, 1025), Err(AutomationPrepareError::CapacityExceeded));
+        let targets = vec![ParamTarget { id: "GainA", value: 1.5 }; 4097];
+        assert_eq!(p.process_with_targets(&mut io, 1, &targets), ProcessDelivery::CapacityExceeded);
+        assert_eq!(p.gain, 1.0);
+        assert_eq!(p.calls, 0);
     }
 }

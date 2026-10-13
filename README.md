@@ -251,6 +251,8 @@ estimates are in [`ROADMAP.md`](ROADMAP.md); the full assessment is in
 [`docs/parity-checklist.md`](docs/parity-checklist.md). Bug reports and wish lists are
 very welcome, in the issues or on Discord.
 
+The [prepared automation playback scope](docs/automation-playback.md) records the shared seven-family consumer update, its verification boundary and remaining exposed-control/runtime limits. SC-MX11 remains partial; the stage and estimates are unchanged.
+
 ## Downloads
 
 **Download SoundCraft** from GitHub: the [latest release](https://github.com/storytold/soundcraft/releases/latest) has every build listed below, and [all releases](https://github.com/storytold/soundcraft/releases) has earlier versions and their notes. `<ver>` in the file names is the version number, and `SHA256SUMS.txt` lists a checksum for every file.

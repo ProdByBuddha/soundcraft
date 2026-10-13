@@ -413,7 +413,10 @@ impl SoundApp {
 
     fn start_play(&mut self, from: Samples, end: Option<Samples>, looped: Option<Range>) {
         if let Some(p) = &self.player {
-            p.update_session(self.engine.session_arc());
+            if let Err(error) = p.try_update_session(self.engine.session_arc(), self.engine.session_generation()) {
+                self.ui.status = error.to_string();
+                return;
+            }
             p.play(from, end, looped);
         } else {
             self.sim = Some((from, end, looped));
@@ -897,8 +900,10 @@ impl SoundApp {
         self.handle_transport(dt);
         if self.engine.revision != self.last_rev {
             self.last_rev = self.engine.revision;
-            if let Some(p) = &self.player {
-                p.update_session(self.engine.session_arc());
+            if let Some(p) = &self.player
+                && let Err(error) = p.try_update_session(self.engine.session_arc(), self.engine.session_generation())
+            {
+                self.ui.status = error.to_string();
             }
         }
         self.write_automation(ctx);

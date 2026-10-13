@@ -506,6 +506,12 @@ fn view(e: &mut Engine, p: &Value) -> Result<Value> {
     if !ok {
         return Err(bad("track.view", format!("unknown view `{v}`")));
     }
+    if let Some(param) = soundcraft_model::AutoParam::parse(&v) {
+        for id in &tracks {
+            let track = e.session().track(*id).ok_or_else(|| bad("track.view", "unknown track"))?;
+            super::mix::validate_lane(track, &param).map_err(|error| bad("track.view", error))?;
+        }
+    }
     let s = e.session_mut();
     for t in &tracks {
         if let Some(tr) = s.track_mut(*t) {

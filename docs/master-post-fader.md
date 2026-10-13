@@ -10,13 +10,13 @@ The manual places ordinary track inserts before the fader and Master Fader inser
 
 Active Master Faders now apply their Volume gain while copying main audio into the prepared strip, process active non-bypassed slots A through J in sequence, then copy back at unity. Output meters still observe the final result. Ordinary Audio and Aux inserts keep their pre-fader order. Multiple active Master Faders retain the existing main-output cascade and main channel width.
 
-The touched Master path uses a saturating last-included-frame endpoint and the existing linear gain ramp over that block. A knot at the next block's first frame cannot start a ramp in the preceding block. Zero- and one-frame callbacks and holding lanes at `i64::MAX` are covered. Nonempty readable Volume lanes retain the existing enabled-flag and Write-mode compatibility; this change does not migrate global lane policy or make Volume automation sample-exact. A different chunk schedule can still produce a different ramp across internal curve knots.
+The original SC-MX02 checkpoint used a saturating last-included-frame endpoint and a linear gain ramp over each block; its endpoint-dependent tests below are historical evidence of that law. The [shared prepared automation follow-up](automation-playback.md) evaluates readable Master Volume at each absolute sample while preserving gain-before-inserts order. Volume in Write still uses the static fader, and the enabled/suspend policy is unchanged. Its focused references and full integration requirement are recorded in the linked workflow; the original nonlinear signal-order acceptance does not by itself establish the new automation law or complete SC-MX11.
 
-Only the existing prepared buffers are used. The Master callback adds no allocation, lock or logging path. Callback allocation and CPU performance have not been measured.
+At the original SC-MX02 checkpoint, only existing prepared buffers were used and the Master callback added no allocation, lock or logging path. Callback allocation and CPU performance were not measured. The prepared follow-up has the separate ownership and measurement qualifications recorded in [automation playback](automation-playback.md).
 
-## Native evidence
+## Original SC-MX02 native evidence
 
-Eight Mix tests and three Engine tests pass on the native Rust 1.95 toolchain with serial test execution. Output/reference comparisons assert exact channel and frame shapes and finite PCM. Non-silent static limiter cases require audible signal; the -144 dB case requires exact silence. The independent reference derives limiter gain reduction from linked peak level, threshold, ratio and attack/release recurrence, without calling mixer or DSP expectation helpers. The built-in compressor uses limiter mode with zero lookahead, so latency cannot mask signal order.
+At the SC-MX02 checkpoint, eight Mix tests and three Engine tests passed on the native Rust 1.95 toolchain with serial test execution. Output/reference comparisons assert exact channel and frame shapes and finite PCM. Non-silent static limiter cases require audible signal; the -144 dB case requires exact silence. The independent reference derives limiter gain reduction from linked peak level, threshold, ratio and attack/release recurrence, without calling mixer or DSP expectation helpers. The built-in compressor uses limiter mode with zero lookahead, so latency cannot mask signal order.
 
 The Mix tests cover:
 
@@ -40,4 +40,5 @@ Stage, readiness values, milestone completion and effort estimates are unchanged
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-12 | minor | Marked original block-endpoint reference law as historical; shared prepared sample-Volume follow-up preserves Master insert order and has separate verification |
 | 2026-10-12 | minor | Added Master gain-before-inserts order, last-included endpoint and independent nonlinear native command/persistence acceptance; broader runtime and automation residuals retained |

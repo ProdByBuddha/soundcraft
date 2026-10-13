@@ -246,7 +246,7 @@ fn endpoint_gains(start: i64, frames: usize, sizes: &[usize]) -> Vec<f64> {
 }
 
 #[test]
-fn automated_master_matches_declared_endpoint_reference_for_each_chunk_schedule() {
+fn automated_master_matches_independent_sample_reference_for_each_chunk_schedule() {
     for sizes in [vec![1], vec![37], vec![64], vec![100], vec![512], vec![1024], vec![1, 37, 64, 3, 100, 19]] {
         let (mut s, _, master) = fixture(ChannelFormat::Stereo);
         insert(&mut s, master, 0, -6.0);
@@ -256,11 +256,16 @@ fn automated_master_matches_declared_endpoint_reference_for_each_chunk_schedule(
         }
         let mut mix = MixEngine::new(48_000.0, 1024);
         let actual = chunks(&mut mix, &s, 0, LEN, &sizes);
-        let expected = limited(&input(2, 0, LEN), &endpoint_gains(0, LEN, &sizes), -6.0, &mut 0.0);
+        // SC-MX11 intentionally replaces the historical block-end gain ramp with
+        // independently interpolated dB at every absolute sample, before this limiter.
+        let sample_gains: Vec<f64> = (0..LEN).map(|at| gain(db_at(at as i64))).collect();
+        let expected = limited(&input(2, 0, LEN), &sample_gains, -6.0, &mut 0.0);
         check(&actual, &expected, 2, LEN);
         audible(&actual);
-        // Interior knots can still make endpoint interpolation depend on the callback partition.
-        // This asserts its explicit reference, not complete sample-exact Volume automation.
+        if sizes.iter().any(|n| *n > 1) {
+            let wrong_block_law = limited(&input(2, 0, LEN), &endpoint_gains(0, LEN, &sizes), -6.0, &mut 0.0);
+            assert!(expected.iter().flatten().zip(wrong_block_law.iter().flatten()).any(|(a, b)| (a - b).abs() > 1e-3));
+        }
     }
 }
 

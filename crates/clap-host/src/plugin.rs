@@ -2,7 +2,9 @@
 
 use crate::ffi::{EVENT_CAP, Event, GuiLink, Instance, NotePort, PortBuffers};
 use clap_sys::ext::note_ports::{CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI};
-use soundcraft_dsp::{Plugin, PluginEditor, PluginInfo};
+use soundcraft_dsp::{
+    AutomationPrepareError, MAX_AUTOMATION_NOTES, MAX_AUTOMATION_PARAMS, ParamTarget, Plugin, PluginEditor, PluginInfo, ProcessDelivery,
+};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -26,7 +28,11 @@ pub struct ClapPlugin {
     /// CLAP id of each `info.params` entry (same order).
     ids: Vec<u32>,
     values: Vec<f32>,
-    /// Pending events, kept sorted by time (stable for equal times). Never grows past `EVENT_CAP`.
+    parameter_capacity: usize,
+    note_capacity: usize,
+    note_count: usize,
+    overflowed: bool,
+    /// Pending events, kept sorted by time (stable for equal times). Never grows past its off-thread prepared logical bound.
     queue: Vec<Event>,
     inputs: PortBuffers,
     outputs: PortBuffers,
@@ -36,6 +42,8 @@ pub struct ClapPlugin {
     held: [bool; 128],
     channels: usize,
     max_block: usize,
+    /// Factory/caller configuration alone is not a successful processing lifetime.
+    has_processed: bool,
     latency: usize,
     steady: i64,
 }
@@ -43,13 +51,17 @@ pub struct ClapPlugin {
 impl ClapPlugin {
     pub(crate) fn new(inst: Instance, info: &'static PluginInfo) -> ClapPlugin {
         let ids: Vec<u32> = info.params.iter().map(|p| p.id.parse::<u32>().unwrap_or(u32::MAX)).collect();
-        let values = info.params.iter().zip(&ids).map(|(p, id)| inst.param_value(*id).map_or(p.default, |v| p.clamp(v as f32))).collect();
+        let values: Vec<f32> = info.params.iter().zip(&ids).map(|(p, id)| inst.param_value(*id).map_or(p.default, |v| p.clamp(v as f32))).collect();
         ClapPlugin {
             inst,
             info,
             ids,
             values,
-            queue: Vec::with_capacity(EVENT_CAP),
+            parameter_capacity: info.params.len(),
+            note_capacity: EVENT_CAP,
+            note_count: 0,
+            overflowed: false,
+            queue: Vec::with_capacity(info.params.len().saturating_add(EVENT_CAP)),
             inputs: PortBuffers::new(&[], 0),
             outputs: PortBuffers::new(&[], 0),
             in_main: None,
@@ -58,6 +70,7 @@ impl ClapPlugin {
             held: [false; 128],
             channels: 2,
             max_block: 0,
+            has_processed: false,
             latency: 0,
             steady: 0,
         }
@@ -74,14 +87,41 @@ impl ClapPlugin {
         self.queue.retain(|e| !matches!(e, Event::Param { .. }));
     }
 
-    /// Inserts keeping the queue time-sorted; drops the event when the queue is full (never
-    /// allocates on the audio thread).
-    fn push(&mut self, e: Event) {
-        if self.queue.len() >= self.queue.capacity() {
-            return;
+    /// Inserts only into prepared storage. A note overflow is reported by the next receipt.
+    fn push(&mut self, e: Event) -> bool {
+        let note = !matches!(e, Event::Param { .. });
+        if self.queue.len() >= self.parameter_capacity.saturating_add(self.note_capacity) || (note && self.note_count >= self.note_capacity) {
+            self.overflowed = true;
+            return false;
         }
         let pos = self.queue.iter().rposition(|q| q.time() <= e.time()).map_or(0, |i| i + 1);
         self.queue.insert(pos, e);
+        self.note_count += usize::from(note);
+        true
+    }
+
+    fn discard_pending(&mut self) {
+        self.queue.clear();
+        self.note_count = 0;
+        self.overflowed = false;
+    }
+
+    /// Deliberate state restoration/reconfiguration, never capacity preparation. Preserve
+    /// explicit pending control writes instead of replacing them with cached defaults.
+    fn queue_current_values(&mut self) -> Result<(), AutomationPrepareError> {
+        if self.ids.len() > self.parameter_capacity || self.ids.len() > MAX_AUTOMATION_PARAMS {
+            return Err(AutomationPrepareError::CapacityExceeded);
+        }
+        for i in 0..self.ids.len() {
+            let id = self.ids[i];
+            if self.queue.iter().any(|event| matches!(event, Event::Param { id: pending, .. } if *pending == id)) {
+                continue;
+            }
+            if !self.push(Event::Param { time: 0, id, value: f64::from(self.values[i]) }) {
+                return Err(AutomationPrepareError::CapacityExceeded);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -97,73 +137,15 @@ fn note_mode(p: Option<NotePort>) -> NoteMode {
     }
 }
 
-impl Plugin for ClapPlugin {
-    fn info(&self) -> &'static PluginInfo {
-        self.info
-    }
-
-    fn prepare(&mut self, sample_rate: f32, max_block: usize, channels: usize) {
-        let sr = if sample_rate.is_finite() && sample_rate > 0.0 { f64::from(sample_rate) } else { 48_000.0 };
-        let mb = max_block.clamp(1, MAX_BLOCK);
-        self.channels = channels.clamp(1, MAX_CHANNELS);
-        self.inst.deactivate();
-        self.inst.service_callback();
-        let ins = self.inst.audio_ports(true);
-        let outs = self.inst.audio_ports(false);
-        self.in_main = pick_main(&ins);
-        self.out_main = pick_main(&outs);
-        self.inputs = PortBuffers::new(&ins.iter().map(|p| p.channels).collect::<Vec<_>>(), mb);
-        self.outputs = PortBuffers::new(&outs.iter().map(|p| p.channels).collect::<Vec<_>>(), mb);
-        self.notes = note_mode(self.inst.note_port());
-        self.max_block = mb;
-        self.inst.state().restart.store(false, Ordering::Relaxed);
-        match self.inst.activate(sr, 1, u32::try_from(mb).unwrap_or(u32::MAX)) {
-            Ok(()) => {
-                self.latency = self.inst.latency() as usize;
-                self.inst.state().latency_changed.store(false, Ordering::Relaxed);
-            }
-            Err(e) => {
-                log::warn!("{}: {e}", self.info.id);
-                self.latency = 0;
-            }
-        }
-    }
-
-    fn reset(&mut self) {
-        self.inst.reset();
-        self.queue.retain(|e| matches!(e, Event::Param { .. }));
-        self.held = [false; 128];
-    }
-
-    fn set_param(&mut self, id: &str, value: f32) -> bool {
-        let Some(i) = self.info.params.iter().position(|p| p.id == id) else { return false };
-        let (Some(pi), Some(&cid)) = (self.info.params.get(i), self.ids.get(i)) else { return false };
-        let v = pi.clamp(value);
-        if let Some(slot) = self.values.get_mut(i) {
-            *slot = v;
-        }
-        // Coalesce with a pending change of the same parameter.
-        if let Some(Event::Param { value, .. }) = self.queue.iter_mut().find(|e| matches!(e, Event::Param { id, .. } if *id == cid)) {
-            *value = f64::from(v);
-        } else {
-            self.push(Event::Param { time: 0, id: cid, value: f64::from(v) });
-        }
-        true
-    }
-
-    fn param(&self, id: &str) -> Option<f32> {
-        let i = self.info.params.iter().position(|p| p.id == id)?;
-        self.values.get(i).copied()
-    }
-
-    fn process(&mut self, io: &mut [Vec<f32>], frames: usize) {
+impl ClapPlugin {
+    fn process_audio(&mut self, io: &mut [Vec<f32>], frames: usize) -> ProcessDelivery {
         if !self.inst.is_active() || self.max_block == 0 {
-            return;
+            return ProcessDelivery::ProcessorFailed;
         }
         let ch = self.channels.min(io.len());
         let frames = io.iter().take(ch).map(Vec::len).fold(frames, usize::min);
         if frames == 0 || ch == 0 {
-            return;
+            return ProcessDelivery::ProcessorFailed;
         }
         let last = u32::try_from(frames - 1).unwrap_or(u32::MAX);
         for e in &mut self.queue {
@@ -188,6 +170,7 @@ impl Plugin for ClapPlugin {
             let offset = u32::try_from(start).unwrap_or(u32::MAX);
             let events = self.queue.get(..k).unwrap_or(&[]);
             let r = self.inst.process(n, self.steady, &mut self.inputs, &mut self.outputs, events, offset);
+            self.note_count = self.note_count.saturating_sub(events.iter().filter(|e| !matches!(e, Event::Param { .. })).count());
             self.queue.drain(..k);
             self.steady = self.steady.saturating_add(i64::try_from(n).unwrap_or(0));
             match (r, self.out_main) {
@@ -206,11 +189,135 @@ impl Plugin for ClapPlugin {
                         }
                     }
                 }
-                (Err(e), _) => log::debug!("{}: {e}", self.info.id),
+                (Err(e), _) => return e,
                 _ => {}
             }
             start += n;
         }
+        self.has_processed = true;
+        ProcessDelivery::Delivered
+    }
+}
+
+impl Plugin for ClapPlugin {
+    fn info(&self) -> &'static PluginInfo {
+        self.info
+    }
+
+    fn prepare(&mut self, sample_rate: f32, max_block: usize, channels: usize) {
+        let reprepare = self.has_processed;
+        let sr = if sample_rate.is_finite() && sample_rate > 0.0 { f64::from(sample_rate) } else { 48_000.0 };
+        let mb = max_block.clamp(1, MAX_BLOCK);
+        self.channels = channels.clamp(1, MAX_CHANNELS);
+        self.inst.deactivate();
+        self.inst.service_callback();
+        let ins = self.inst.audio_ports(true);
+        let outs = self.inst.audio_ports(false);
+        self.in_main = pick_main(&ins);
+        self.out_main = pick_main(&outs);
+        self.inputs = PortBuffers::new(&ins.iter().map(|p| p.channels).collect::<Vec<_>>(), mb);
+        self.outputs = PortBuffers::new(&outs.iter().map(|p| p.channels).collect::<Vec<_>>(), mb);
+        self.notes = note_mode(self.inst.note_port());
+        self.max_block = mb;
+        self.inst.state().restart.store(false, Ordering::Relaxed);
+        match self.inst.activate(sr, 1, u32::try_from(mb).unwrap_or(u32::MAX)) {
+            Ok(()) => {
+                self.latency = self.inst.latency() as usize;
+                self.inst.state().latency_changed.store(false, Ordering::Relaxed);
+            }
+            Err(e) => {
+                log::warn!("{}: {e}", self.info.id);
+                self.latency = 0;
+            }
+        }
+        if self.prepare_automation(self.info.params.len(), EVENT_CAP).is_err() || (reprepare && self.queue_current_values().is_err()) {
+            self.max_block = 0;
+        }
+    }
+
+    fn reset(&mut self) {
+        self.inst.reset();
+        self.note_count = 0;
+        self.overflowed = false;
+        self.queue.retain(|e| matches!(e, Event::Param { .. }));
+        self.held = [false; 128];
+    }
+
+    fn set_param(&mut self, id: &str, value: f32) -> bool {
+        let Some(i) = self.info.params.iter().position(|p| p.id == id) else { return false };
+        let (Some(pi), Some(&cid)) = (self.info.params.get(i), self.ids.get(i)) else { return false };
+        let v = pi.clamp(value);
+        // Coalesce with a pending change of the same parameter.
+        if let Some(Event::Param { value, .. }) = self.queue.iter_mut().find(|e| matches!(e, Event::Param { id, .. } if *id == cid)) {
+            *value = f64::from(v);
+        } else if !self.push(Event::Param { time: 0, id: cid, value: f64::from(v) }) {
+            return false;
+        }
+        if let Some(slot) = self.values.get_mut(i) {
+            *slot = v;
+        }
+        true
+    }
+
+    fn param(&self, id: &str) -> Option<f32> {
+        let i = self.info.params.iter().position(|p| p.id == id)?;
+        self.values.get(i).copied()
+    }
+
+    fn process(&mut self, io: &mut [Vec<f32>], frames: usize) {
+        let result = if self.overflowed { ProcessDelivery::CapacityExceeded } else { self.process_audio(io, frames) };
+        if result != ProcessDelivery::Delivered {
+            self.discard_pending();
+            for channel in io.iter_mut().take(self.channels) {
+                channel.iter_mut().take(frames).for_each(|sample| *sample = 0.0);
+            }
+        }
+    }
+
+    fn prepare_automation(&mut self, parameter_capacity: usize, note_capacity: usize) -> Result<(), AutomationPrepareError> {
+        if parameter_capacity < self.info.params.len() || parameter_capacity > MAX_AUTOMATION_PARAMS || note_capacity > MAX_AUTOMATION_NOTES {
+            return Err(AutomationPrepareError::CapacityExceeded);
+        }
+        let capacity = parameter_capacity.checked_add(note_capacity).ok_or(AutomationPrepareError::CapacityExceeded)?;
+        self.queue.retain(|event| matches!(event, Event::Param { .. }));
+        self.note_count = 0;
+        self.overflowed = false;
+        self.queue.try_reserve_exact(capacity.saturating_sub(self.queue.len())).map_err(|_| AutomationPrepareError::AllocationFailed)?;
+        self.inst.prepare_event_capacity(capacity)?;
+        self.parameter_capacity = parameter_capacity;
+        self.note_capacity = note_capacity;
+        Ok(())
+    }
+
+    fn process_with_targets(&mut self, io: &mut [Vec<f32>], frames: usize, targets: &[ParamTarget<'_>]) -> ProcessDelivery {
+        if frames == 0 || io.len() < self.channels || io.iter().take(self.channels).any(|channel| channel.len() < frames) {
+            self.discard_pending();
+            return ProcessDelivery::ProcessorFailed;
+        }
+        let failure = if self.overflowed || targets.len() > self.parameter_capacity {
+            Some(ProcessDelivery::CapacityExceeded)
+        } else if targets.iter().any(|t| !t.value.is_finite() || !self.info.params.iter().any(|p| p.id == t.id))
+            || self.queue.iter().any(|e| e.time() as usize >= frames)
+        {
+            Some(ProcessDelivery::InvalidTarget)
+        } else {
+            None
+        };
+        if let Some(failure) = failure {
+            self.discard_pending();
+            return failure;
+        }
+        for target in targets {
+            if !self.set_param(target.id, target.value) {
+                self.discard_pending();
+                return ProcessDelivery::CapacityExceeded;
+            }
+        }
+        let result = self.process_audio(io, frames);
+        if result != ProcessDelivery::Delivered {
+            self.discard_pending();
+        }
+        result
     }
 
     fn latency(&self) -> usize {
@@ -223,10 +330,13 @@ impl Plugin for ClapPlugin {
         }
         let time = u32::try_from(offset).unwrap_or(u32::MAX);
         let vel = velocity.min(127);
-        match self.notes {
+        let queued = match self.notes {
             NoteMode::Clap => self.push(Event::NoteOn { time, key: note, velocity: f64::from(vel) / 127.0 }),
             NoteMode::Midi => self.push(Event::Midi { time, data: [0x90, note, vel] }),
             NoteMode::None => return,
+        };
+        if !queued {
+            return;
         }
         if let Some(h) = self.held.get_mut(note as usize) {
             *h = true;
@@ -238,10 +348,13 @@ impl Plugin for ClapPlugin {
             return;
         }
         let time = u32::try_from(offset).unwrap_or(u32::MAX);
-        match self.notes {
+        let queued = match self.notes {
             NoteMode::Clap => self.push(Event::NoteOff { time, key: note }),
             NoteMode::Midi => self.push(Event::Midi { time, data: [0x80, note, 0] }),
             NoteMode::None => return,
+        };
+        if !queued {
+            return;
         }
         if let Some(h) = self.held.get_mut(note as usize) {
             *h = false;
@@ -261,11 +374,15 @@ impl Plugin for ClapPlugin {
     }
 
     fn load_state(&mut self, data: &[u8]) -> bool {
-        let ok = self.inst.load_state(data);
-        if ok {
-            self.refresh_values();
+        if !self.inst.load_state(data) {
+            return false;
         }
-        ok
+        self.refresh_values();
+        if self.queue_current_values().is_err() {
+            self.max_block = 0;
+            return false;
+        }
+        true
     }
 
     fn open_editor(&mut self) -> Result<(), String> {

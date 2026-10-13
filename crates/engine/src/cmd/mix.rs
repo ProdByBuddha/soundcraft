@@ -442,11 +442,48 @@ fn lane_param(p: &Value, cmd: &str) -> Result<AutoParam> {
     str_param(p, "param").map_or(Ok(AutoParam::Volume), |s| AutoParam::parse(s).ok_or_else(|| bad(cmd, format!("unknown automation param `{s}`"))))
 }
 
+pub(crate) fn validate_lane(track: &soundcraft_model::Track, param: &AutoParam) -> std::result::Result<(), &'static str> {
+    match param {
+        AutoParam::Plugin { slot, param } if *slot == u8::MAX && param == "trim" => Ok(()),
+        AutoParam::Pan(index)
+            if usize::from(*index) >= track.channels().max(if track.kind == soundcraft_model::TrackKind::Instrument { 2 } else { 1 }).min(2) =>
+        {
+            Err("pan index has no source channel")
+        }
+        AutoParam::SendLevel(index) | AutoParam::SendPan(index) | AutoParam::SendMute(index) => {
+            if track.mixer.sends.get(usize::from(*index)).and_then(Option::as_ref).is_none() {
+                Err("automation send slot is empty or out of range")
+            } else {
+                Ok(())
+            }
+        }
+        AutoParam::Plugin { slot, param } => {
+            let ins =
+                track.mixer.inserts.get(usize::from(*slot)).and_then(Option::as_ref).ok_or("automation insert slot is empty or out of range")?;
+            let info = super::clap::plugin_info(&ins.plugin).ok_or("automation plugin metadata is unavailable")?;
+            if param.is_empty() || info.param(param).is_none() { Err("unknown exact plugin parameter ID") } else { Ok(()) }
+        }
+        _ => Ok(()),
+    }
+}
+
+fn validate_tracks(e: &Engine, tracks: &[TrackId], param: &AutoParam, command: &str) -> Result<()> {
+    for id in tracks {
+        let track = e.session().track(*id).ok_or_else(|| bad(command, "unknown track"))?;
+        validate_lane(track, param).map_err(|error| bad(command, error))?;
+    }
+    Ok(())
+}
+
 fn set_point(e: &mut Engine, p: &Value) -> Result<Value> {
     let tracks = tracks_required(e, "automation.set_point", p)?;
     let param = lane_param(p, "automation.set_point")?;
     let at = position_param(e, "automation.set_point", p, "at")?.unwrap_or(e.session().edit.selection.start).max(0);
     let v = p.get("value").and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| bad("automation.set_point", "`value` required"))? as f32;
+    if !v.is_finite() {
+        return Err(bad("automation.set_point", "value exceeds finite f32 range"));
+    }
+    validate_tracks(e, &tracks, &param, "automation.set_point")?;
     let s = e.session_mut();
     for t in &tracks {
         if let Some(tr) = s.track_mut(*t) {
@@ -461,6 +498,10 @@ fn write_range(e: &mut Engine, p: &Value) -> Result<Value> {
     let param = lane_param(p, "automation.write_range")?;
     let r = range_param(e, "automation.write_range", p)?;
     let v = p.get("value").and_then(Value::as_f64).filter(|v| v.is_finite()).ok_or_else(|| bad("automation.write_range", "`value` required"))? as f32;
+    if !v.is_finite() {
+        return Err(bad("automation.write_range", "value exceeds finite f32 range"));
+    }
+    validate_tracks(e, &tracks, &param, "automation.write_range")?;
     let s = e.session_mut();
     for t in &tracks {
         if let Some(tr) = s.track_mut(*t) {

@@ -285,7 +285,7 @@ pub fn bounce_source_at_rate(
 ) -> Result<BounceOutput> {
     let s = e.session();
     let (source_frames, frames, channels) = bounce_plan(s, r, fold_stereo, bus, sample_rate)?;
-    let (mut ch, fmt) = render_bounce(s, r, fold_stereo, bus);
+    let (mut ch, fmt) = render_bounce(s, r, fold_stereo, bus)?;
     let shape_ok = |ch: &[Vec<f32>], frames| ch.len() == channels && ch.iter().all(|c| c.len() == frames);
     if !shape_ok(&ch, source_frames) {
         return Err(bounce_error("renderer did not deliver the complete requested channel/frame shape"));
@@ -370,21 +370,21 @@ fn bounce_plan(s: &Session, r: Range, fold: bool, bus: Option<BusId>, rate: Samp
 }
 
 /// The main mix over `r` and its format (folded to stereo on request).
-fn render_main(s: &Session, r: Range, fold_stereo: bool) -> (Vec<Vec<f32>>, ChannelFormat) {
+fn render_main(s: &Session, r: Range, fold_stereo: bool) -> Result<(Vec<Vec<f32>>, ChannelFormat)> {
     render_bounce(s, r, fold_stereo, None)
 }
 
 /// The main mix, or one bus, over `r`.
-fn render_bounce(s: &Session, r: Range, fold_stereo: bool, bus: Option<BusId>) -> (Vec<Vec<f32>>, ChannelFormat) {
+fn render_bounce(s: &Session, r: Range, fold_stereo: bool, bus: Option<BusId>) -> Result<(Vec<Vec<f32>>, ChannelFormat)> {
     let (ch, fmt) = if let Some(id) = bus {
         let fmt = s.bus(id).map(|b| b.format).unwrap_or(ChannelFormat::Stereo);
-        (soundcraft_mix::render_bus(s, id, r, 1024), fmt)
+        (soundcraft_mix::try_render_bus(s, id, r, 1024).map_err(|error| bounce_error(&error.to_string()))?, fmt)
     } else {
-        let ch = soundcraft_mix::render_range(s, r, 1024);
+        let ch = soundcraft_mix::try_render_range(s, r, 1024).map_err(|error| bounce_error(&error.to_string()))?;
         let fmt = if ch.len() <= 2 { ChannelFormat::Stereo } else { s.main_format() };
         (ch, fmt)
     };
-    if fold_stereo && ch.len() > 2 { (soundcraft_mix::fold_down_stereo(fmt, &ch), ChannelFormat::Stereo) } else { (ch, fmt) }
+    Ok(if fold_stereo && ch.len() > 2 { (soundcraft_mix::fold_down_stereo(fmt, &ch), ChannelFormat::Stereo) } else { (ch, fmt) })
 }
 
 /// Bounce one file per audio/instrument track (each soloed, so its sends and auxes are included)
@@ -414,7 +414,7 @@ pub fn bounce_stems_with(e: &Engine, dir: &str, r: Range, opts: &EncodeOptions, 
         for t in &mut solo.tracks {
             t.mixer.solo = t.id == id;
         }
-        let (ch, fmt) = render_main(&solo, r, fold_stereo);
+        let (ch, fmt) = render_main(&solo, r, fold_stereo)?;
         let buf = AudioBuffer { sample_rate: s.sample_rate.hz(), channels: ch };
         let bytes = soundcraft_audio_io::encode_with_channel_mask(&buf, opts, fmt.channel_mask()).map_err(|err| EngineError::Io(err.to_string()))?;
         let path = Path::new(dir).join(format!("{} - {}.{ext}", sanitize_name(&s.name), sanitize_name(&name)));
@@ -557,7 +557,7 @@ pub fn commit_track(e: &mut Engine, t: TrackId) -> Result<Option<TrackId>> {
         return Err(too_long());
     }
     let range = Range::new(0, end);
-    let audio = soundcraft_mix::render_track_pre_fader(s, t, range);
+    let audio = soundcraft_mix::try_render_track_pre_fader(s, t, range).map_err(|error| bounce_error(&error.to_string()))?;
     if audio.len() != fmt.channels() || audio.iter().any(|channel| channel.len() != frames) {
         return Err(EngineError::Io("track commit did not render the complete channel format and range".into()));
     }
