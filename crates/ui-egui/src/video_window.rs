@@ -3,7 +3,7 @@
 
 use crate::SoundApp;
 use crate::theme::{mono, regular};
-use crate::video_track::{MovieKey, movie_secs, online, picture_at};
+use crate::video_track::{MovieKey, clip_movie_secs, online, picture_at};
 use egui::{Align2, Color32, Rect, Sense, pos2, vec2};
 use serde_json::json;
 use soundcraft_model::{ClipContent, TrackKind};
@@ -119,7 +119,7 @@ fn universe(app: &mut SoundApp, ctx: &egui::Context) {
         };
         let ppp = ctx.pixels_per_point();
         for c in track.clips() {
-            let ClipContent::Video { source, offset } = c.content else { continue };
+            let ClipContent::Video { source, .. } = c.content else { continue };
             let Some(v) = s.video(source) else { continue };
             let key = MovieKey::new(source, &v.path);
             let cr = Rect::from_min_max(pos2(x_at(c.start), r.min.y + 4.0), pos2(x_at(c.end()).max(x_at(c.start) + 2.0), r.max.y - 4.0));
@@ -132,7 +132,7 @@ fn universe(app: &mut SoundApp, ctx: &egui::Context) {
             let mut x = cr.min.x;
             while x < cr.max.x {
                 let at = c.start + ((x - r.min.x) / r.width() * end as f32) as i64 - c.start.min(0);
-                let secs = movie_secs(&s, c.start, offset, at.max(c.start)).max(0.0);
+                let secs = clip_movie_secs(&s, c, at.max(c.start)).max(0.0);
                 if let Some(tex) = app.video.thumb(ctx, key, &v.path, secs, hpx) {
                     let tr = Rect::from_min_size(pos2(x, cr.min.y), vec2(tw, cr.height()));
                     let vis = tr.intersect(cr);

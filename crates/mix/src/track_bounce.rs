@@ -210,11 +210,12 @@ pub fn plan(s: &Session, id: TrackId, range: Range, capture_end: Samples, option
             return Err("invalid clip range/stretch".into());
         }
         match (&c.content, t.kind) {
-            (ClipContent::Audio { source, offset }, TrackKind::Audio) if !c.muted => {
+            (ClipContent::Audio { source, .. }, TrackKind::Audio) if !c.muted => {
                 audio(s, *source, true)?;
                 let frames = s.pool.get(*source).map_or(0, |a| a.buffer.frames());
-                let last = *offset as f64 + (c.length - 1) as f64 / c.stretch;
-                if *offset < 0 || !last.is_finite() || last.floor() >= frames as f64 {
+                let first = c.source_position(0);
+                let last = c.source_position(c.length - 1);
+                if first < 0.0 || !first.is_finite() || !last.is_finite() || last.floor() >= frames as f64 {
                     return Err("audio clip exceeds loaded source coverage".into());
                 }
             }

@@ -404,6 +404,12 @@ pub fn movie_secs(s: &Session, clip_start: Samples, offset: Samples, at: Samples
     (at.saturating_sub(clip_start).saturating_add(offset) as f64 - sync) / s.sample_rate.as_f64().max(1.0)
 }
 
+/// Resolve a placed window through its retained source coordinates, including captured cuts.
+pub fn clip_movie_secs(s: &Session, clip: &soundcraft_model::Clip, at: Samples) -> f64 {
+    let rel = at.saturating_sub(clip.start);
+    movie_secs(s, clip.start, 0, at) + (clip.source_position(rel) - rel as f64) / s.sample_rate.as_f64().max(1.0)
+}
+
 /// The picture at `at`: the topmost active Video track with an unmuted clip there.
 pub fn picture_at(s: &Session, at: Samples) -> Option<(MovieKey, String, f64, f64)> {
     for t in s.tracks.iter().filter(|t| t.kind == soundcraft_model::TrackKind::Video && !t.inactive) {
@@ -411,10 +417,10 @@ pub fn picture_at(s: &Session, at: Samples) -> Option<(MovieKey, String, f64, f6
             if c.muted || !c.range().contains(at) {
                 continue;
             }
-            if let ClipContent::Video { source, offset } = c.content
+            if let ClipContent::Video { source, .. } = c.content
                 && let Some(v) = s.video(source)
             {
-                return Some((MovieKey::new(source, &v.path), v.path.clone(), movie_secs(s, c.start, offset, at), v.frame_rate));
+                return Some((MovieKey::new(source, &v.path), v.path.clone(), clip_movie_secs(s, c, at), v.frame_rate));
             }
         }
     }
@@ -433,7 +439,7 @@ pub fn draw_lane(app: &mut SoundApp, painter: &Painter, s: &Session, track: &Tra
     let name_h = if lane.height() >= 40.0 && s.edit.flag("view.clip.name") { 13.0 } else { 0.0 };
     let ppp = ctx.pixels_per_point();
     for clip in track.clips() {
-        let ClipContent::Video { source, offset } = clip.content else { continue };
+        let ClipContent::Video { source, .. } = clip.content else { continue };
         let x0 = x_of(s, tl, clip.start);
         let x1 = x_of(s, tl, clip.end()).max(x0 + 1.0);
         let body = Rect::from_min_max(pos2(x0 + 1.0, lane.min.y + 2.0 + name_h), pos2(x1 - 1.0, lane.max.y - 2.0));
@@ -468,7 +474,7 @@ pub fn draw_lane(app: &mut SoundApp, painter: &Painter, s: &Session, track: &Tra
                 break;
             }
             let at = sample_at(s, tl, tx);
-            let secs = movie_secs(s, clip.start, offset, at.max(clip.start));
+            let secs = clip_movie_secs(s, clip, at.max(clip.start));
             let r = Rect::from_min_max(pos2(tx, body.min.y), pos2((tx + tw).min(body.max.x), body.max.y));
             match app.video.thumb(&ctx, key, &v.path, secs.max(0.0), hpx) {
                 Some(tex) => {
@@ -483,5 +489,51 @@ pub fn draw_lane(app: &mut SoundApp, painter: &Painter, s: &Session, track: &Tra
             p.line_segment([pos2(tx, body.min.y), pos2(tx, body.max.y)], egui::Stroke::new(1.0, Color32::from_black_alpha(160)));
             k += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod retained_window_tests {
+    use super::*;
+    use serde_json::json;
+    use soundcraft_engine::Engine;
+    use soundcraft_model::{ChannelFormat, Clip, TrackKind, VideoSource};
+
+    #[test]
+    fn retained_picture_uses_the_same_movie_clock_after_removing_every_instance() {
+        let mut session = Session::default();
+        let track = session.add_track(TrackKind::Video, ChannelFormat::Mono, Some("Original picture"));
+        let source = SourceId(session.alloc());
+        session.videos.push(VideoSource {
+            id: source,
+            name: "Original synthetic reference".into(),
+            path: "/fixture/original.mov".into(),
+            width: 320,
+            height: 240,
+            frame_rate: 30.0,
+            duration: 1.0,
+            codec: "mjpeg".into(),
+        });
+        let original = session.new_clip_id();
+        let clip = Clip::video(original, "Parent", source, 31, 211, 421);
+        session.track_mut(track).unwrap().playlist_mut().unwrap().clips.push(clip.clone());
+        session.edit.values.insert("video.sync_offset".into(), 11.0);
+        let mut engine = Engine::new(session);
+        let result = engine.execute("clip.capture", &json!({"clip": original, "start": 248, "end": 515})).unwrap();
+        let definition = result["definitions"][0]["id"].as_u64().unwrap();
+        assert_eq!(engine.session().find_clip(original).unwrap().1, &clip);
+        engine.execute("clip.clear", &json!({"clips": [original]})).unwrap();
+        assert_eq!(engine.session().all_clips().count(), 0);
+        engine.execute("clip.place_definition", &json!({"definition": definition, "track": track, "at": 1003})).unwrap();
+        for local in [0, 1, 83, 266] {
+            let (_, path, seconds, rate) = picture_at(engine.session(), 1003 + local).unwrap();
+            assert_eq!(path, "/fixture/original.mov");
+            assert_eq!(rate, 30.0);
+            assert!((seconds - (31 + 37 + local - 11) as f64 / 48_000.0).abs() < 1e-12);
+        }
+        assert!(picture_at(engine.session(), 1002).is_none());
+        assert!(picture_at(engine.session(), 1270).is_none());
+        engine.session_mut().track_mut(track).unwrap().inactive = true;
+        assert!(picture_at(engine.session(), 1003).is_none());
     }
 }

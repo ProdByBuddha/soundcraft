@@ -1,6 +1,6 @@
 # SoundCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (MX-38 fidelity/state/delivery acceptance; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (ED-46 reusable definitions and acceptance; estimates unchanged) · **Target:** Avid Pro Tools Ultimate 2026.4.1
 
 Forward-looking plan. Status and numbers: [`../ROADMAP.md`](../ROADMAP.md) and
 [`target-app-parity.md`](target-app-parity.md); the ranked work list: [`gaps.md`](gaps.md).
@@ -19,6 +19,11 @@ audio splits, refuses unsupported clip processing and preserves no-op document/h
 Advanced Heal, removed silence and MIDI/video remain; stage and estimates are unchanged.
 
 MX-38 progress (2026-10-13): [Bounce Mix state, history and delivery](bounce-delivery.md) retains its original full criterion and partial status. Exact frame admission, detached prepared/editor state and fresh-file publication are addressed together; device/platform acceptance remains separate. Stage and estimates are unchanged.
+
+ED-46 progress (2026-10-13): [Persistent reusable definitions](reusable-clips.md) add independent
+selection payloads, fresh placement and source retention. Native analytic/lifecycle acceptance,
+prepared allocation/timing and visual evidence are required; ED-20 search/UI remains a separate
+dependent feature. Stage and estimates are unchanged.
 
 ## Current focus
 
@@ -118,6 +123,7 @@ ED-56 arrangement correctness progress: [selection repeat](selection-repeat.md) 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | Added ED-46 persistent reusable definitions and acceptance requirements; estimates unchanged |
 | 2026-10-13 | minor | Added MX-38 full fidelity/state/delivery acceptance and explicit runtime limits; estimates unchanged |
 | 2026-10-12 | minor | Recorded shared prepared seven-family automation policy, focused native references and integration requirement; EX01–EX10, stage and estimates retained |
 | 2026-10-12 | minor | Verified SC-MX02 Master post-fader nonlinear reference and persistence scope; milestone completion and estimates unchanged |

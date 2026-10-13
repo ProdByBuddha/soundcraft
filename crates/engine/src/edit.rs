@@ -36,6 +36,12 @@ pub fn split_clip(clip: &Clip, at: Samples, new_id: ClipId, t: TimeCtx<'_>) -> O
     right.trim_start_to(at);
     left.fade_out = Fade::default();
     right.fade_in = Fade::default();
+    if let Some(slice) = &mut left.slice {
+        slice.fade_out_remaining_samples = 0;
+    }
+    if let Some(slice) = &mut right.slice {
+        slice.fade_in_elapsed_samples = 0;
+    }
     if let (ClipContent::Midi { sequence: ls }, ClipContent::Midi { sequence: rs }) = (&mut left.content, &mut right.content) {
         let boundary = t.ticks(at) - t.ticks(clip.start);
         ls.notes.retain(|n| n.start < boundary);
@@ -334,6 +340,9 @@ fn heal_pair(s: &Session, a: &Clip, b: &Clip, duplicates: &std::collections::BTr
         (ClipContent::Audio { source: sa, offset: oa }, ClipContent::Audio { source: sb, offset: ob }) => (sa, oa, sb, ob),
         _ => return Err("unsupported_content"),
     };
+    if a.slice.is_some() || b.slice.is_some() {
+        return Err("unsupported_slice");
+    }
     if a.length <= 0 || b.length <= 0 || a.start < 0 || b.start < 0 || *oa < 0 || *ob < 0 {
         return Err("invalid_clip");
     }
@@ -363,8 +372,7 @@ fn heal_pair(s: &Session, a: &Clip, b: &Clip, duplicates: &std::collections::BTr
         return Err("unsupported_stretch");
     }
     if a.fade_in.len != 0 || a.fade_out.len != 0 || b.fade_in.len != 0 || b.fade_out.len != 0 {
-        // The renderer approximates gain on clip-relative segments. Even outer fades can
-        // change their interpolation grid when an unaligned seam disappears.
+        // Healing processed windows needs a separate plan preserving their gain geometry.
         return Err("unsupported_fade");
     }
     if !a.gain_env.is_empty() || !b.gain_env.is_empty() {
@@ -471,11 +479,17 @@ pub fn create_fades(s: &mut Session, track: TrackId, range: Range, shape: FadeSh
             if let Some(ca) = pl.clips.get_mut(i) {
                 ca.length += ext_a;
                 ca.fade_out = Fade { len: (ext_a + before).min(ca.length), shape };
+                if let Some(slice) = &mut ca.slice {
+                    slice.fade_out_remaining_samples = 0;
+                }
             }
             if let Some(cb) = pl.clips.get_mut(i + 1) {
                 let old = cb.start;
                 cb.trim_start_to(old - ext_b);
                 cb.fade_in = Fade { len: (ext_b + after).min(cb.length), shape };
+                if let Some(slice) = &mut cb.slice {
+                    slice.fade_in_elapsed_samples = 0;
+                }
             }
             made += 1;
             xfaded.push(a.id);
@@ -485,9 +499,15 @@ pub fn create_fades(s: &mut Session, track: TrackId, range: Range, shape: FadeSh
     for c in pl.clips.iter_mut().filter(|c| !xfaded.contains(&c.id)) {
         if range.start <= c.start && range.end > c.start && range.end < c.end() {
             c.fade_in = Fade { len: range.end - c.start, shape };
+            if let Some(slice) = &mut c.slice {
+                slice.fade_in_elapsed_samples = 0;
+            }
             made += 1;
         } else if range.end >= c.end() && range.start > c.start && range.start < c.end() {
             c.fade_out = Fade { len: c.end() - range.start, shape };
+            if let Some(slice) = &mut c.slice {
+                slice.fade_out_remaining_samples = 0;
+            }
             made += 1;
         }
     }
@@ -505,6 +525,10 @@ pub fn delete_fades(s: &mut Session, track: TrackId, range: Range) -> usize {
             }
             c.fade_in = Fade::default();
             c.fade_out = Fade::default();
+            if let Some(slice) = &mut c.slice {
+                slice.fade_in_elapsed_samples = 0;
+                slice.fade_out_remaining_samples = 0;
+            }
         }
     }
     // Overlapping (crossfaded) neighbours are trimmed back to the midpoint.

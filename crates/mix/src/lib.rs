@@ -1627,8 +1627,8 @@ mod click {
     }
 }
 
-fn render_clip(s: &Session, clip: &Clip, pos: Samples, frames: usize, buf: &mut [Vec<f32>], _scratch: &mut [f32]) {
-    let ClipContent::Audio { source, offset } = clip.content else { return };
+fn render_clip(s: &Session, clip: &Clip, pos: Samples, frames: usize, buf: &mut [Vec<f32>], scratch: &mut [f32]) {
+    let ClipContent::Audio { source, .. } = clip.content else { return };
     let block = Range { start: pos, end: pos.saturating_add(frames as i64) };
     let Some(isect) = clip.range().intersect(&block) else { return };
     let Some(audio) = s.pool.get(source) else { return };
@@ -1636,41 +1636,40 @@ fn render_clip(s: &Session, clip: &Clip, pos: Samples, frames: usize, buf: &mut 
     if nsrc == 0 {
         return;
     }
-    let stretch = if clip.stretch.is_finite() && clip.stretch > 0.0 { clip.stretch } else { 1.0 };
     let i0 = usize::try_from(isect.start - pos).unwrap_or(0);
     let i1 = usize::try_from(isect.end - pos).unwrap_or(0).min(frames);
-    // Gain is evaluated every 32 samples and interpolated (fades and envelopes stay smooth).
-    const STEP: usize = 32;
+    // A captured window must play the same curve at any destination and block size. The
+    // previous block-relative 32-sample approximation changed its phase after a middle cut.
+    // Constant clips keep the cheap path; curves follow their actual per-sample model law.
+    let constant_gain = (clip.gain_env.is_empty() && clip.fade_in.len <= 0 && clip.fade_out.len <= 0).then(|| clip.gain_at(0));
+    // Prepared strips already own a max-block scratch buffer. Evaluate curves once per
+    // frame, shared across channels, without allocating in the audio callback.
+    let mut gain_buffer = if constant_gain.is_none() { scratch.get_mut(..frames) } else { None };
+    if let Some(gains) = gain_buffer.as_mut() {
+        for (k, gain) in gains.iter_mut().enumerate().skip(i0).take(i1.saturating_sub(i0)) {
+            *gain = clip.gain_at(pos.saturating_add(k as i64).saturating_sub(clip.start));
+        }
+    }
     for (ch, dst) in buf.iter_mut().enumerate() {
         let src = audio.buffer.channels.get(ch % nsrc).map(Vec::as_slice).unwrap_or(&[]);
-        let mut i = i0;
-        while i < i1 {
-            let seg_end = (i + STEP).min(i1);
-            let rel0 = pos.saturating_add(i as i64).saturating_sub(clip.start);
-            // The last sample of this step, not the first sample of the next one, so a breakpoint
-            // on the boundary does not ramp the audio before it.
-            let rel1 = pos.saturating_add(seg_end.saturating_sub(1) as i64).saturating_sub(clip.start);
-            let g0 = clip.gain_at(rel0);
-            let g1 = clip.gain_at(rel1.min(clip.length));
-            let n = (seg_end - i).saturating_sub(1).max(1) as f32;
-            for k in i..seg_end {
-                let rel = pos.saturating_add(k as i64).saturating_sub(clip.start);
-                let v = if (stretch - 1.0).abs() < 1e-9 {
-                    usize::try_from(offset.saturating_add(rel)).ok().and_then(|x| src.get(x)).copied().unwrap_or(0.0)
-                } else {
-                    let f = offset as f64 + rel as f64 / stretch;
-                    let x0 = f.floor();
-                    let fr = (f - x0) as f32;
-                    let a = if x0 >= 0.0 { src.get(x0 as usize).copied().unwrap_or(0.0) } else { 0.0 };
-                    let b = if x0 + 1.0 >= 0.0 { src.get((x0 as usize).saturating_add(1)).copied().unwrap_or(0.0) } else { 0.0 };
-                    a + (b - a) * fr
-                };
-                let t = (k - i) as f32 / n;
-                if let Some(d) = dst.get_mut(k) {
-                    *d += v * (g0 + (g1 - g0) * t);
-                }
+        for k in i0..i1 {
+            let rel = pos.saturating_add(k as i64).saturating_sub(clip.start);
+            let f = clip.source_position(rel);
+            let x0 = f.floor();
+            let fr = f - x0;
+            let a = if x0 >= 0.0 { src.get(x0 as usize).copied().unwrap_or(0.0) } else { 0.0 };
+            let v = if fr == 0.0 {
+                a
+            } else {
+                let b = if x0 + 1.0 >= 0.0 { src.get((x0 + 1.0) as usize).copied().unwrap_or(0.0) } else { 0.0 };
+                // Finite opposite Float32 extrema can overflow b-a in f32. Interpolate
+                // in f64 so both integer reads and fractional convex combinations stay finite.
+                (f64::from(a) * (1.0 - fr) + f64::from(b) * fr) as f32
+            };
+            let gain = constant_gain.or_else(|| gain_buffer.as_ref().and_then(|gains| gains.get(k)).copied()).unwrap_or_else(|| clip.gain_at(rel));
+            if let Some(d) = dst.get_mut(k) {
+                *d += v * gain;
             }
-            i = seg_end;
         }
     }
 }
@@ -1701,10 +1700,13 @@ fn schedule_notes(
             continue;
         }
         let ClipContent::Midi { sequence } = &clip.content else { continue };
-        if !clip.range().overlaps(&Range { start: pos, end }) {
+        // A note whose cropped end equals a block boundary is released at frame zero of
+        // the next block. Half-open clip overlap alone used to skip that final note-off.
+        if clip.start >= end || clip.end() < pos {
             continue;
         }
         let base = s.tempo.samples_to_ticks(clip.start, sr);
+        let base_sample = s.tempo.tick_to_samples(base, sr);
         let (dv, dp, dur, delay) = (
             properties[0].clamp(-127.0, 127.0) as i64,
             properties[1].clamp(-127.0, 127.0) as i64,
@@ -1717,8 +1719,13 @@ fn schedule_notes(
             n.pitch = (i64::from(n.pitch) + dp).clamp(0, 127) as u8;
             n.length = ((n.length as f64 * dur) as i64).max(1);
             n.start = n.start.saturating_add(delay).max(0);
-            let on = s.tempo.tick_to_samples(base.saturating_add(n.start), sr);
-            let off = s.tempo.tick_to_samples(base.saturating_add(n.start).saturating_add(n.length), sr).min(clip.end());
+            // Ticks are relative to the exact clip position. Preserve its fractional-tick
+            // sample phase so a zero-offset note is not scheduled before a placed window.
+            let on = clip.start.saturating_add(s.tempo.tick_to_samples(base.saturating_add(n.start), sr).saturating_sub(base_sample));
+            let off = clip
+                .start
+                .saturating_add(s.tempo.tick_to_samples(base.saturating_add(n.start).saturating_add(n.length), sr).saturating_sub(base_sample))
+                .min(clip.end());
             if on >= clip.end() {
                 continue;
             }

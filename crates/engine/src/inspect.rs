@@ -12,6 +12,7 @@ fn clip_json(e: &Engine, c: &Clip) -> Value {
         "id": c.id, "name": c.name, "start": c.start, "end": c.end(), "length": c.length,
         "start_time": fmt(c.start), "gain_db": c.gain_db, "muted": c.muted,
         "fade_in": c.fade_in.len, "fade_out": c.fade_out.len, "locked": c.edit_locked || c.time_locked,
+        "source_position": c.source_position(0), "slice": c.slice, "definition": c.definition,
     });
     match &c.content {
         ClipContent::Audio { source, offset } => {
@@ -77,6 +78,7 @@ pub fn session(e: &Engine, full: bool) -> Value {
         "frame_rate": s.frame_rate.label(), "tempo": s.tempo.tempos(), "meter": s.tempo.meters(), "main_format": s.main_format().label(),
         "length_samples": s.content_end(),
         "tracks": s.tracks.iter().map(|t| track_json(e, t, full)).collect::<Vec<_>>(),
+        "clip_definitions": if full { json!(s.clip_definitions) } else { json!(s.clip_definitions.len()) },
         "busses": s.busses.iter().map(|b| json!({"id": b.id, "name": b.name, "format": b.format.label()})).collect::<Vec<_>>(),
         "markers": s.markers.iter().map(|m| json!({"id": m.id, "number": m.number, "name": m.name, "kind": m.kind, "start": m.start, "end": m.end})).collect::<Vec<_>>(),
         "groups": s.groups.iter().map(|g| json!({"id": g.id, "name": g.name, "letter": g.letter, "members": g.members, "active": g.active})).collect::<Vec<_>>(),
