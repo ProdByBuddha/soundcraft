@@ -60,7 +60,15 @@ impl OriginalStore {
             return Err(EngineError::Unsupported("encoded-original preservation requires native storage".into()));
         }
         text_path(&root)?;
-        std::fs::create_dir(&root).map_err(original_error)?;
+        let directory = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        let directory = {
+            use std::os::unix::fs::DirBuilderExt as _;
+            let mut directory = directory;
+            directory.mode(0o700);
+            directory
+        };
+        directory.create(&root).map_err(original_error)?;
         Ok(Self { root, max_bytes, next: 0, assets: Vec::new() })
     }
 
@@ -93,7 +101,14 @@ impl OriginalStore {
         }
         self.next = self.next.checked_add(1).ok_or_else(|| original_error("store identity exhausted"))?;
         let path = self.root.join(format!("original-{}.asset", self.next));
-        let mut output = OpenOptions::new().write(true).create_new(true).open(&path).map_err(original_error)?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut output = options.open(&path).map_err(original_error)?;
         let owned = output.metadata().map_err(original_error)?;
         let result = stream_copy(&mut input, &mut output, bound, cancel).and_then(|receipt| {
             output.sync_all().map_err(original_error)?;
@@ -717,4 +732,140 @@ pub(crate) fn restore_bundle_original(
     verify_original(&candidate, None, &cancel).map_err(BundleOriginalFailure::Invalid)?;
     *original = candidate;
     Ok(lease)
+}
+
+#[cfg(all(test, unix))]
+mod permissions_tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::rc::Rc;
+
+    const PAYLOAD: &[u8] = b"SoundCraft original permission fixture\x00\xff\x10";
+    const FIRST_CHUNK: usize = 16;
+    const CHILD_MARKER: &str = "SOUNDCRAFT_ORIGINAL_PERMISSIONS_TEST_CHILD";
+    const CHILD_RECEIPT: &str = "SOUNDCRAFT_ORIGINAL_PERMISSIONS_022_VERIFIED";
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> std::io::Result<Self> {
+            let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(std::io::Error::other)?.as_nanos();
+            let path = std::env::temp_dir().join(format!("soundcraft-original-permissions-{}-{nonce}", std::process::id()));
+            std::fs::create_dir(&path)?;
+            Ok(Self(path))
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct Observation {
+        directory_mode: u32,
+        file_mode: u32,
+        bytes: u64,
+        contents_match: bool,
+    }
+
+    fn observe(root: &Path, path: &Path, expected: &[u8]) -> std::io::Result<Observation> {
+        let file = std::fs::metadata(path)?;
+        Ok(Observation {
+            directory_mode: std::fs::metadata(root)?.permissions().mode() & 0o7777,
+            file_mode: file.permissions().mode() & 0o7777,
+            bytes: file.len(),
+            contents_match: std::fs::read(path)? == expected,
+        })
+    }
+
+    /// Observe the actual staged path before the first write and after one chunk has been written,
+    /// while the production writer is still open and has not reached sync or read-only sealing.
+    struct MidWriteReader {
+        root: PathBuf,
+        path: PathBuf,
+        phase: u8,
+        created: Rc<Cell<Option<Observation>>>,
+        partial: Rc<Cell<Option<Observation>>>,
+    }
+
+    impl Read for MidWriteReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let chunk = match self.phase {
+                0 => {
+                    self.created.set(Some(observe(&self.root, &self.path, &[])?));
+                    PAYLOAD.get(..FIRST_CHUNK)
+                }
+                1 => {
+                    let first = PAYLOAD.get(..FIRST_CHUNK).ok_or_else(|| std::io::Error::other("invalid fixture prefix"))?;
+                    self.partial.set(Some(observe(&self.root, &self.path, first)?));
+                    PAYLOAD.get(FIRST_CHUNK..)
+                }
+                _ => return Ok(0),
+            }
+            .ok_or_else(|| std::io::Error::other("invalid fixture chunk"))?;
+            let destination = buffer.get_mut(..chunk.len()).ok_or_else(|| std::io::Error::other("fixture read buffer too small"))?;
+            destination.copy_from_slice(chunk);
+            self.phase += 1;
+            Ok(chunk.len())
+        }
+    }
+
+    #[test]
+    fn owner_only_creation_before_and_during_original_copy_under_umask_022() -> Result<()> {
+        if std::env::var_os(CHILD_MARKER).as_deref() != Some(std::ffi::OsStr::new("1")) {
+            // The mask belongs only to this owned child process, never the parallel test runner.
+            let output = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg("umask 022\nexec \"$1\" --exact original_audio::permissions_tests::owner_only_creation_before_and_during_original_copy_under_umask_022 --nocapture")
+                .arg("soundcraft-original-permissions")
+                .arg(std::env::current_exe().map_err(original_error)?)
+                .env(CHILD_MARKER, "1")
+                .output()
+                .map_err(original_error)?;
+            assert!(
+                output.status.success(),
+                "owned permission-test child failed: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains(CHILD_RECEIPT), "owned child did not execute the complete fixture");
+            return Ok(());
+        }
+
+        let scratch = TestDirectory::new().map_err(original_error)?;
+        // These ordinary creations prove this child would expose default-mode originals under 022.
+        assert_eq!(std::fs::metadata(&scratch.0).map_err(original_error)?.permissions().mode() & 0o7777, 0o755);
+        let control = scratch.0.join("empty-permission-control");
+        let ordinary = OpenOptions::new().write(true).create_new(true).open(&control).map_err(original_error)?;
+        assert_eq!(ordinary.metadata().map_err(original_error)?.permissions().mode() & 0o7777, 0o644);
+        drop(ordinary);
+        std::fs::remove_file(control).map_err(original_error)?;
+
+        let root = scratch.0.join("managed-originals");
+        let mut store = OriginalStore::new(root.clone(), 1_024)?;
+        let path = root.join("original-1.asset");
+        let created = Rc::new(Cell::new(None));
+        let partial = Rc::new(Cell::new(None));
+        let reader = MidWriteReader { root: root.clone(), path: path.clone(), phase: 0, created: created.clone(), partial: partial.clone() };
+        let (lease, hash, bytes) = store.stage(reader, PAYLOAD.len() as u64, &AtomicBool::new(false))?;
+
+        assert_eq!(created.get(), Some(Observation { directory_mode: 0o700, file_mode: 0o600, bytes: 0, contents_match: true }));
+        assert_eq!(partial.get(), Some(Observation { directory_mode: 0o700, file_mode: 0o600, bytes: FIRST_CHUNK as u64, contents_match: true }));
+        assert_eq!(bytes, 41);
+        assert_eq!(hash, "736c9606b48fdea0d91806a18005dde93b8e0ac19aab35e57cb36d755eb3c51b");
+        assert_eq!(std::fs::read(&path).map_err(original_error)?, PAYLOAD);
+        assert_eq!(std::fs::metadata(&path).map_err(original_error)?.permissions().mode() & 0o7777, 0o400);
+        assert!(std::fs::metadata(&path).map_err(original_error)?.permissions().readonly());
+        assert_eq!(lease.path, path);
+        assert_eq!(store.collect_expired()?, 0, "the active lease must retain the original");
+        drop(lease);
+        assert_eq!(store.collect_expired()?, 1, "expired owned media must retain its existing cleanup behavior");
+        assert!(!path.exists());
+        assert!(root.is_dir());
+        println!("{CHILD_RECEIPT}");
+        Ok(())
+    }
 }
