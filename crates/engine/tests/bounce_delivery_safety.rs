@@ -392,6 +392,210 @@ fn an_unsaved_virtual_pcm_name_does_not_reserve_a_missing_filesystem_destination
     before.unchanged_and_redo_works(&mut engine);
 }
 
+fn video_session(folder: Option<PathBuf>, locator: String) -> Session {
+    let mut session = engine().session().clone();
+    session.folder = folder;
+    let id = soundcraft_model::SourceId(session.alloc());
+    session.videos.push(soundcraft_model::VideoSource {
+        id,
+        name: "Unreferenced movie".into(),
+        path: locator,
+        width: 0,
+        height: 0,
+        frame_rate: 0.0,
+        duration: 0.0,
+        codec: String::new(),
+    });
+    session
+}
+
+fn video_refusal(session: Session, destination: &Path, expected: &str) {
+    let mut engine = seeded(Engine::new(session));
+    let before = State::capture(&engine);
+    let parent = destination.parent().unwrap();
+    let entries = std::fs::read_dir(parent).unwrap().count();
+    let error = failure(bounce_delivery::prepare_destination(engine.session(), destination));
+    assert!(error.contains(expected), "{error}");
+    assert!(!destination.exists());
+    assert_eq!(std::fs::read_dir(parent).unwrap().count(), entries, "no output or stage on refusal");
+    before.unchanged_and_redo_works(&mut engine);
+}
+
+#[test]
+fn missing_unreferenced_video_names_reserve_absolute_relative_and_cwd_destinations() {
+    let dir = Directory::new();
+    let destination = dir.path("MissingMovie.wav");
+    for locator in [destination.to_str().unwrap().to_owned(), "MissingMovie.wav".into(), "missingmovie.WAV".into()] {
+        video_refusal(video_session(Some(dir.0.clone()), locator), &destination, "current video locator");
+    }
+    // Exercise CWD fallback without changing the process-global directory during parallel tests.
+    let cwd = std::env::current_dir().unwrap();
+    let target = dir.0.canonicalize().unwrap().join("cwd-movie.wav");
+    let cwd_parts: Vec<_> = cwd.components().collect();
+    let target_parts: Vec<_> = target.components().collect();
+    let common = cwd_parts.iter().zip(&target_parts).take_while(|(a, b)| a == b).count();
+    // On different Windows drives, an absolute locator is required instead.
+    if common > 0 {
+        let mut relative = PathBuf::new();
+        for _ in common..cwd_parts.len() {
+            relative.push("..");
+        }
+        for component in target_parts.iter().skip(common) {
+            relative.push(component.as_os_str());
+        }
+        video_refusal(video_session(None, relative.to_str().unwrap().into()), &target, "current video locator");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn deleted_cwd_keeps_absolute_video_anchors_independent_of_process_directory() {
+    const CHILD_ROOT: &str = "SOUNDCRAFT_VIDEO_DELETED_CWD_CHILD_ROOT";
+    if let Some(root) = std::env::var_os(CHILD_ROOT) {
+        let root = PathBuf::from(root);
+        let deleted = root.join("deleted-cwd");
+        std::fs::create_dir(&deleted).unwrap();
+        std::env::set_current_dir(&deleted).unwrap();
+        std::fs::remove_dir(&deleted).unwrap();
+        assert!(std::env::current_dir().is_err(), "fixture must actually remove CWD");
+        for relative in [false, true] {
+            let reserved = root.join(if relative { "relative-movie.wav" } else { "absolute-movie.wav" });
+            let locator = if relative { "relative-movie.wav".to_owned() } else { reserved.to_str().unwrap().to_owned() };
+            let session = video_session(relative.then(|| root.clone()), locator);
+            video_refusal(session.clone(), &reserved, "current video locator");
+            let mut engine = seeded(Engine::new(session));
+            let before = State::capture(&engine);
+            let destination = root.join(if relative { "relative-output.wav" } else { "absolute-output.wav" });
+            let bytes = wire(48_000);
+            let plan = bounce_delivery::prepare_destination(engine.session(), &destination).unwrap();
+            let receipt = bounce_delivery::publish(bounce_delivery::stage(plan, &bytes).unwrap()).unwrap();
+            assert!(receipt.complete);
+            assert_eq!(receipt.bytes, bytes.len() as u64);
+            assert_eq!(receipt.sha256, sha(&bytes));
+            assert_eq!(std::fs::read(destination).unwrap(), bytes);
+            before.unchanged_and_redo_works(&mut engine);
+        }
+        return;
+    }
+    let dir = Directory::new();
+    let root = dir.0.canonicalize().unwrap();
+    // Only the isolated child changes CWD. Capture its libtest output so nested fixture
+    // harness lines cannot masquerade as this package's Cargo test evidence.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "deleted_cwd_keeps_absolute_video_anchors_independent_of_process_directory", "--nocapture"])
+        .env(CHILD_ROOT, root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "child failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"), "child must run its fixture");
+}
+
+#[test]
+fn oversized_video_base_and_combined_name_refuse_privately_without_staging() {
+    let dir = Directory::new();
+    for (folder, locator) in [(dir.path(&"b".repeat(4097)), "movie.mov".to_owned()), (dir.0.clone(), "m".repeat(4096))] {
+        let mut engine = seeded(Engine::new(video_session(Some(folder), locator)));
+        let before = State::capture(&engine);
+        let destination = dir.path("output.wav");
+        let error = failure(bounce_delivery::prepare_destination(engine.session(), &destination));
+        assert!(error.contains("cannot resolve current video locator safely"), "{error}");
+        assert!(!error.contains("movie.mov"));
+        assert!(!error.contains("bbb"));
+        assert!(!error.contains("mmm"));
+        assert!(!destination.exists());
+        assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 0);
+        before.unchanged_and_redo_works(&mut engine);
+    }
+}
+
+#[test]
+fn unrelated_video_name_allows_literal_delivery_and_receipt_without_history_changes() {
+    let dir = Directory::new();
+    for locator in ["unrecovered.mov", "", "existing.mov"] {
+        std::fs::write(dir.path("existing.mov"), b"metadata-only movie fixture").unwrap();
+        let mut engine = seeded(Engine::new(video_session(Some(dir.0.clone()), locator.into())));
+        let before = State::capture(&engine);
+        let destination = dir.path(&format!("output-{}.wav", locator.len()));
+        let bytes = wire(48_000);
+        let plan = bounce_delivery::prepare_destination(engine.session(), &destination).unwrap();
+        let receipt = bounce_delivery::publish(bounce_delivery::stage(plan, &bytes).unwrap()).unwrap();
+        assert!(receipt.complete);
+        assert_eq!(receipt.bytes, bytes.len() as u64);
+        assert_eq!(receipt.sha256, sha(&bytes));
+        assert_eq!(std::fs::read(destination).unwrap(), bytes);
+        before.unchanged_and_redo_works(&mut engine);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn video_aliases_reserve_missing_names_and_uncertain_sources_fail_privately() {
+    use std::os::unix::fs::symlink;
+    let dir = Directory::new();
+    let real = dir.path("real");
+    std::fs::create_dir(&real).unwrap();
+    let alias = dir.path("alias");
+    symlink(&real, &alias).unwrap();
+    video_refusal(video_session(None, alias.join("movie.wav").to_str().unwrap().into()), &real.join("MOVIE.wav"), "current video locator");
+    let dangling = dir.path("private-dangling.mov");
+    symlink(dir.path("absent-target"), &dangling).unwrap();
+    let looped = dir.path("private-loop.mov");
+    symlink(&looped, &looped).unwrap();
+    for locator in [
+        dangling.to_str().unwrap().to_owned(),
+        looped.to_str().unwrap().to_owned(),
+        "private-missing/../movie.mov".into(),
+        "private-nul\0.mov".into(),
+    ] {
+        let engine = seeded(Engine::new(video_session(Some(dir.0.clone()), locator.clone())));
+        let before = State::capture(&engine);
+        let destination = dir.path("unrelated.wav");
+        let entries = std::fs::read_dir(&dir.0).unwrap().count();
+        let error = failure(bounce_delivery::prepare_destination(engine.session(), &destination));
+        assert!(error.contains("cannot resolve current video locator safely"), "{error}");
+        assert!(!error.contains(&locator));
+        assert!(!error.contains("private-"));
+        assert!(!destination.exists());
+        assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), entries);
+        before.unchanged(&engine);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn unsupported_windows_video_names_refuse_generically_before_staging() {
+    let dir = Directory::new();
+    for locator in [r"C:private.mov", r"\private.mov", r"\\?\C:\private.mov", "private.mov:stream", "NUL.mov", "private.mov."] {
+        video_refusal(video_session(Some(dir.0.clone()), locator.into()), &dir.path("output.wav"), "cannot resolve current video locator safely");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_video_folder_bytes_preserve_unrelated_delivery_and_destination_policy() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    use std::os::unix::fs::symlink;
+    let dir = Directory::new();
+    let native = dir.0.join(OsString::from_vec(b"native-\xff".to_vec()));
+    std::fs::create_dir(&native).unwrap();
+    let alias = dir.path("utf8-alias");
+    symlink(&native, &alias).unwrap();
+    // The destination entry remains UTF-8; its canonical parent has native bytes. Existing
+    // destination policy refuses that canonical path, so use a separate UTF-8 parent alias
+    // in the session folder and compare a native video base against an unrelated UTF-8 output.
+    let destination = dir.path("output.wav");
+    let session = video_session(Some(native), "Movie.wav".into());
+    let plan = bounce_delivery::prepare_destination(&session, &destination).unwrap();
+    assert_eq!(plan.destination(), destination.as_path());
+    assert!(bounce_delivery::prepare_destination(&session, &alias.join("movie.wav")).is_err());
+}
+
 #[test]
 fn unrelated_existing_file_and_directory_are_preserved_before_staging() {
     let dir = Directory::new();

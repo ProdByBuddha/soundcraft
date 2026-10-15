@@ -83,6 +83,56 @@ fn same_recorded_path(a: &Path, b: &Path) -> bool {
     a == b || matches!((a.to_str(), b.to_str()), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b))
 }
 
+// Video names remain reserved even before their files can be recovered. Resolve one component
+// at a time: missing components are acceptable, but a dangling link or traversal through an
+// unknown directory cannot be safely reduced. Diagnostics intentionally omit private locators.
+fn video_name(path: &Path) -> Result<PathBuf> {
+    let invalid = || fail("cannot resolve current video locator safely");
+    let mut out = PathBuf::new();
+    let mut missing = false;
+    let mut components = path.components().peekable();
+    while let Some(component) = components.next() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => out.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if missing || !out.pop() {
+                    return Err(invalid());
+                }
+            }
+            Component::Normal(name) => {
+                out.push(name);
+                if missing {
+                    continue;
+                }
+                match std::fs::symlink_metadata(&out) {
+                    Ok(metadata) => {
+                        out = out.canonicalize().map_err(|_| invalid())?;
+                        if components.peek().is_some() && !metadata.is_dir() && !std::fs::metadata(&out).map_err(|_| invalid())?.is_dir() {
+                            return Err(invalid());
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => missing = true,
+                    Err(_) => return Err(invalid()),
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn same_video_name(a: &Path, b: &Path) -> bool {
+    let mut a = a.components();
+    let mut b = b.components();
+    loop {
+        match (a.next(), b.next()) {
+            (None, None) => return true,
+            (Some(a), Some(b)) if a.as_os_str().as_encoded_bytes().eq_ignore_ascii_case(b.as_os_str().as_encoded_bytes()) => {}
+            _ => return false,
+        }
+    }
+}
+
 #[cfg(any(windows, test))]
 fn windows_file_name_safe(name: &str) -> bool {
     if name.is_empty()
@@ -135,7 +185,8 @@ impl DestinationPlan {
 }
 
 /// Validate names and protect every recorded original and persisted playback locator, even
-/// when missing. Virtual unsaved playback paths are not treated as existing media files.
+/// when missing, plus every nonempty current video name. Virtual unsaved playback paths are
+/// not treated as existing media files.
 pub fn prepare_destination(session: &Session, path: &Path) -> Result<DestinationPlan> {
     if cfg!(target_arch = "wasm32") {
         return Err(EngineError::Unsupported("native bounce publication requires a filesystem".into()));
@@ -167,6 +218,50 @@ pub fn prepare_destination(session: &Session, path: &Path) -> Result<Destination
             let protected = source_path(session, locator)?;
             if same_recorded_path(&normalized(&absolute(&protected)?), &lexical) || same_recorded_path(&resolved(&protected)?, &destination) {
                 return Err(fail(format!("destination is a recorded media locator: {locator}")));
+            }
+        }
+    }
+    if session.videos.iter().any(|video| !video.path.is_empty()) {
+        let mut relative_base: Option<PathBuf> = None;
+        for video in session.videos.iter().filter(|video| !video.path.is_empty()) {
+            let locator = Path::new(&video.path);
+            if video.path.contains('\0') || video.path.len() > MAX_PATH_BYTES {
+                return Err(fail("cannot resolve current video locator safely"));
+            }
+            #[cfg(windows)]
+            if !windows_disk_path_safe(&video.path) || (locator.has_root() && !locator.is_absolute()) {
+                return Err(fail("cannot resolve current video locator safely"));
+            }
+            let protected = if locator.is_absolute() {
+                locator.to_owned()
+            } else {
+                if relative_base.is_none() {
+                    let folder = session.folder.as_deref().unwrap_or(Path::new("."));
+                    if folder.as_os_str().as_encoded_bytes().len() > MAX_PATH_BYTES {
+                        return Err(fail("cannot resolve current video locator safely"));
+                    }
+                    let base = if folder.is_absolute() {
+                        folder.to_owned()
+                    } else {
+                        let cwd = std::env::current_dir().map_err(|_| fail("cannot resolve current video locator safely"))?;
+                        if cwd.as_os_str().as_encoded_bytes().len() > MAX_PATH_BYTES {
+                            return Err(fail("cannot resolve current video locator safely"));
+                        }
+                        cwd.join(folder)
+                    };
+                    if base.as_os_str().as_encoded_bytes().len() > MAX_PATH_BYTES {
+                        return Err(fail("cannot resolve current video locator safely"));
+                    }
+                    relative_base = Some(base);
+                }
+                relative_base.as_deref().ok_or_else(|| fail("cannot resolve current video locator safely"))?.join(locator)
+            };
+            if protected.as_os_str().as_encoded_bytes().len() > MAX_PATH_BYTES {
+                return Err(fail("cannot resolve current video locator safely"));
+            }
+            let resolved = video_name(&protected)?;
+            if same_video_name(&protected, &lexical) || same_video_name(&resolved, &destination) {
+                return Err(fail("destination is a current video locator"));
             }
         }
     }
@@ -635,6 +730,32 @@ mod tests {
 
     #[test]
     fn missing_ascii_case_aliases_protect_absolute_relative_and_session_folder_locators() {
+        const CHILD: &str = "SOUNDCRAFT_RECORDED_LOCATOR_TEMP_CWD_CHILD";
+        if std::env::var_os(CHILD).as_deref() != Some(std::ffi::OsStr::new("1")) {
+            let cwd = Directory::new();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "bounce_delivery::tests::missing_ascii_case_aliases_protect_absolute_relative_and_session_folder_locators",
+                    "--nocapture",
+                ])
+                .current_dir(&cwd.0)
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "child failed: stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains("running 1 test") && stdout.contains("test result: ok. 1 passed; 0 failed"),
+                "child must run exactly one fixture: {stdout}"
+            );
+            return;
+        }
         use soundcraft_audio_io::{AudioBuffer, AudioInfo, FileFormat, SampleFormat};
         use soundcraft_model::{ImportPolicy, OriginalProvenance};
         let cwd = std::env::current_dir().unwrap();
@@ -696,5 +817,15 @@ mod tests {
         assert!(same_recorded_path(Path::new("Audio/Missing.WAV"), Path::new("audio/missing.wav")));
         assert!(!same_recorded_path(Path::new("Audio/É.wav"), Path::new("Audio/é.wav")));
         assert!(!same_recorded_path(Path::new("Audio/Missing.wav"), Path::new("Audio/Other.wav")));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn video_name_comparison_keeps_non_utf8_components_and_ascii_case() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        let base = PathBuf::from(OsString::from_vec(b"native-\xff".to_vec()));
+        assert!(same_video_name(&base.join("Movie.WAV"), &base.join("movie.wav")));
+        let other = PathBuf::from(OsString::from_vec(b"native-\xfe".to_vec()));
+        assert!(!same_video_name(&base.join("Movie.WAV"), &other.join("movie.wav")));
     }
 }
