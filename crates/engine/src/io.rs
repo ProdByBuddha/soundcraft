@@ -1466,6 +1466,16 @@ pub(crate) mod original_files {
     pub(crate) fn exclusive(path: &Path) -> std::io::Result<File> {
         std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(path)
     }
+    pub(crate) fn exclusive_private(path: &Path) -> std::io::Result<File> {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options.open(path)
+    }
     pub(crate) fn make_private_dir(path: &Path) -> std::io::Result<()> {
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]

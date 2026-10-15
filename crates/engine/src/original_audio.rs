@@ -352,7 +352,7 @@ mod native {
                 }
                 directory.path.join(format!("{}.asset", next_receipt()?))
             };
-            let file = storage::exclusive(&path).map_err(|err| error(&path, err))?;
+            let file = storage::exclusive_private(&path).map_err(|err| error(&path, err))?;
             let mut identity = Handle::from_file(file).map_err(|err| error(&path, err))?;
             let mut input = bytes;
             let digest = digest_reader(&mut input, size, Some(identity.as_file_mut()));
@@ -579,6 +579,77 @@ mod native {
                 std::thread::sleep(Duration::from_millis(10));
             }
             assert!(storage::inspect(path).is_err(), "collector left {}", path.display());
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn temporary_original_creation_is_owner_only_under_umask_022() {
+            const CHILD: &str = "SOUNDCRAFT_ENCODED_ORIGINAL_PERMISSIONS_CHILD";
+            if std::env::var_os(CHILD).as_deref() != Some(std::ffi::OsStr::new("1")) {
+                let output = std::process::Command::new("sh")
+                    .args(["-c", "umask 022; exec \"$@\"", "soundcraft-original-permissions"])
+                    .arg(std::env::current_exe().unwrap())
+                    .args(["--exact", "original_audio::native::tests::temporary_original_creation_is_owner_only_under_umask_022", "--nocapture"])
+                    .env(CHILD, "1")
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "child failed: {}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(
+                    String::from_utf8_lossy(&output.stdout).contains("private-original-permissions: verified"),
+                    "child did not execute its permission and cleanup checks"
+                );
+                return;
+            }
+
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            let fixture = TestDirectory::new();
+            let control = fixture.0.join("ordinary-create");
+            drop(storage::exclusive(&control).unwrap());
+            assert_eq!(mode(&control), 0o644, "child must exercise the permissive creation control");
+
+            let private = fixture.0.join("private");
+            storage::make_private_dir(&private).unwrap();
+            assert_eq!(mode(&private), 0o700);
+            let staged = private.join("staged.asset");
+            let mut file = storage::exclusive_private(&staged).unwrap();
+            assert_eq!(file.metadata().unwrap().len(), 0);
+            assert_eq!(mode(&staged), 0o600, "permissions must be private before the first byte");
+            file.write_all(b"first").unwrap();
+            file.flush().unwrap();
+            assert_eq!(mode(&staged), 0o600, "permissions must remain private during a write");
+            assert_eq!(std::fs::read(&staged).unwrap(), b"first");
+            assert_eq!(storage::exclusive_private(&staged).unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+            assert_eq!(std::fs::read(&staged).unwrap(), b"first", "exclusive creation must not truncate an existing file");
+            file.write_all(b"-last").unwrap();
+            file.sync_all().unwrap();
+            drop(file);
+            assert_eq!(std::fs::read(&staged).unwrap(), b"first-last");
+
+            let mut store = OriginalStore::new();
+            let bytes = b"exact private encoded original";
+            let (metadata, lease) = store.capture(bytes).unwrap();
+            let path = lease.path.clone();
+            let directory = path.parent().unwrap().to_path_buf();
+            assert_eq!(mode(&directory), 0o700);
+            assert_eq!(mode(&path) & 0o077, 0, "actual capture must use the private creation path");
+            assert_eq!(std::fs::read(&path).unwrap(), bytes);
+            assert_eq!(metadata.bytes, bytes.len() as u64);
+            assert_eq!(metadata.sha256, format!("{:x}", Sha256::digest(bytes)));
+            let snapshot = Arc::clone(&lease);
+            drop(lease);
+            store.close();
+            drop(store);
+            assert_eq!(std::fs::read(&path).unwrap(), bytes, "a live snapshot must retain its private original");
+            drop(snapshot);
+            wait_removed(&path);
+            wait_removed(&directory);
+            println!("private-original-permissions: verified");
         }
 
         #[test]
