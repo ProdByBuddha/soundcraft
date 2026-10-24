@@ -57,7 +57,7 @@ fn observed(p: &mut dyn Plugin) -> Receipt {
     let bytes = p.save_state().unwrap();
     assert_eq!(bytes.len(), 64 + 4096 * 8);
     let words = std::array::from_fn(|i| u64::from_le_bytes(bytes[i * 8..i * 8 + 8].try_into().unwrap()));
-    let values = bytes[64..].chunks_exact(8).map(|b| f64::from_le_bytes(b.try_into().unwrap())).collect();
+    let values = bytes[64..].as_chunks::<8>().0.iter().map(|b| f64::from_le_bytes(*b)).collect();
     Receipt { words, values }
 }
 fn mode(p: &mut dyn Plugin, value: u32) {
