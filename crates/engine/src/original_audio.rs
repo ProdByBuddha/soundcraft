@@ -35,9 +35,18 @@ mod native {
     }
 
     fn next_receipt() -> Result<u64> {
-        NEXT_RECEIPT
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .map_err(|_| EngineError::Io("original asset receipt limit reached".into()))
+        reserve_receipt(&NEXT_RECEIPT)
+    }
+
+    fn reserve_receipt(counter: &AtomicU64) -> Result<u64> {
+        let mut id = counter.load(Ordering::Relaxed);
+        loop {
+            let next = id.checked_add(1).ok_or_else(|| EngineError::Io("original asset receipt limit reached".into()))?;
+            match counter.compare_exchange_weak(id, next, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(id) => return Ok(id),
+                Err(current) => id = current,
+            }
+        }
     }
 
     fn receipts() -> &'static Mutex<BTreeMap<u64, Weak<Mutex<State>>>> {
@@ -537,6 +546,21 @@ mod native {
         use super::*;
         use soundcraft_model::Source;
         use std::time::{Duration, Instant};
+
+        #[test]
+        fn receipt_ids_remain_unique_under_contention_and_do_not_wrap_on_exhaustion() {
+            let counter = AtomicU64::new(u64::MAX - 65);
+            let ids = std::thread::scope(|scope| {
+                let workers: Vec<_> =
+                    (0..8).map(|_| scope.spawn(|| (0..16).filter_map(|_| reserve_receipt(&counter).ok()).collect::<Vec<_>>())).collect();
+                workers.into_iter().flat_map(|worker| worker.join().unwrap()).collect::<Vec<_>>()
+            });
+            assert_eq!(ids.len(), 65);
+            assert_eq!(ids.into_iter().collect::<BTreeSet<_>>(), (u64::MAX - 65..u64::MAX).collect());
+            assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+            assert!(reserve_receipt(&counter).unwrap_err().to_string().contains("receipt limit reached"));
+            assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
+        }
 
         struct TestDirectory(PathBuf);
         impl TestDirectory {
