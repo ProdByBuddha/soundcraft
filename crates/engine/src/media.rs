@@ -21,15 +21,15 @@ pub fn audio_identity(buf: &AudioBuffer) -> String {
     hash.update((buf.frames() as u64).to_le_bytes());
     for channel in &buf.channels {
         hash.update((channel.len() as u64).to_le_bytes());
-        let mut chunks = channel.chunks_exact(1024);
+        let (chunks, remainder) = channel.as_chunks::<1024>();
         let mut bytes = [0u8; 4096];
-        for chunk in chunks.by_ref() {
-            for (encoded, sample) in bytes.chunks_exact_mut(4).zip(chunk) {
+        for chunk in chunks {
+            for (encoded, sample) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(chunk) {
                 encoded.copy_from_slice(&sample.to_bits().to_le_bytes());
             }
             hash.update(bytes.as_slice());
         }
-        for sample in chunks.remainder() {
+        for sample in remainder {
             hash.update(sample.to_bits().to_le_bytes());
         }
     }
