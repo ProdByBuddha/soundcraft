@@ -16,7 +16,7 @@ fn receipt(plugin: &mut dyn Plugin) -> (Vec<f64>, [u64; 5]) {
     let bytes = plugin.save_state().unwrap();
 
     assert_eq!(bytes.len(), P * 8 + 40);
-    let values = bytes[..P * 8].chunks_exact(8).map(|part| f64::from_le_bytes(part.try_into().unwrap())).collect();
+    let values = bytes[..P * 8].as_chunks::<8>().0.iter().map(|part| f64::from_le_bytes(*part)).collect();
     let stats = std::array::from_fn(|i| u64::from_le_bytes(bytes[P * 8 + i * 8..P * 8 + (i + 1) * 8].try_into().unwrap()));
     (values, stats)
 }
